@@ -71,6 +71,7 @@ gc agent
 | [gc agent drain-check](#gc-agent-drain-check) | Check if this agent is draining (exit 0 = draining) |
 | [gc agent kill](#gc-agent-kill) | Force-kill an agent session (reconciler will restart it) |
 | [gc agent list](#gc-agent-list) | List workspace agents |
+| [gc agent logs](#gc-agent-logs) | Show session logs for an agent |
 | [gc agent nudge](#gc-agent-nudge) | Send a message to wake or redirect an agent |
 | [gc agent peek](#gc-agent-peek) | Capture recent output from an agent session |
 | [gc agent request-restart](#gc-agent-request-restart) | Request controller restart this session (blocks until killed) |
@@ -194,6 +195,34 @@ gc agent list [flags]
 |------|------|---------|-------------|
 | `--dir` | string |  | Filter agents by working directory |
 | `--json` | bool |  | Output in JSON format |
+
+## gc agent logs
+
+Show structured session log messages from an agent's JSONL session file.
+
+Reads the agent's session log, resolves the conversation DAG, and prints
+messages in chronological order. Searches default paths (~/.claude/projects/)
+and any extra paths from [daemon] observe_paths in city.toml.
+
+Use --tail to control how many compaction segments to show (0 = all).
+Use -f to follow new messages as they arrive.
+
+```
+gc agent logs <agent-name> [flags]
+```
+
+**Example:**
+
+```
+gc agent logs mayor
+  gc agent logs mayor --tail 0
+  gc agent logs myrig/polecat-1 -f
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-f`, `--follow` | bool |  | Follow new messages as they arrive |
+| `--tail` | int | `1` | Number of compaction segments to show (0 = all) |
 
 ## gc agent nudge
 

@@ -3,6 +3,28 @@
   "$id": "https://github.com/gastownhall/gascity/internal/config/city",
   "$ref": "#/$defs/City",
   "$defs": {
+    "ACPSessionConfig": {
+      "properties": {
+        "handshake_timeout": {
+          "type": "string",
+          "description": "HandshakeTimeout is how long to wait for the ACP handshake to complete.\nDuration string (e.g., \"30s\", \"1m\"). Defaults to \"30s\".",
+          "default": "30s"
+        },
+        "nudge_busy_timeout": {
+          "type": "string",
+          "description": "NudgeBusyTimeout is how long to wait for an agent to become idle\nbefore sending a new prompt. Duration string. Defaults to \"60s\".",
+          "default": "60s"
+        },
+        "output_buffer_lines": {
+          "type": "integer",
+          "description": "OutputBufferLines is the number of output lines to keep in the\ncircular buffer for Peek. Defaults to 1000.",
+          "default": 1000
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ACPSessionConfig holds settings for the ACP session provider."
+    },
     "APIConfig": {
       "properties": {
         "port": {
@@ -54,6 +76,13 @@
         "nudge": {
           "type": "string",
           "description": "Nudge is text typed into the agent's tmux session after startup.\nUsed for CLI agents that don't accept command-line prompts."
+        },
+        "session": {
+          "type": "string",
+          "enum": [
+            "acp"
+          ],
+          "description": "Session overrides the session transport for this agent.\n\"\" (default) uses the city-level session provider (typically tmux).\n\"acp\" uses the Agent Client Protocol (JSON-RPC over stdio).\nThe agent's resolved provider must have supports_acp = true."
         },
         "provider": {
           "type": "string",
@@ -238,6 +267,10 @@
           "type": "string",
           "description": "PromptTemplate overrides the prompt template path.\nRelative paths resolve against the city directory."
         },
+        "session": {
+          "type": "string",
+          "description": "Session overrides the session transport (\"acp\")."
+        },
         "provider": {
           "type": "string",
           "description": "Provider overrides the provider name."
@@ -395,6 +428,10 @@
         "prompt_template": {
           "type": "string",
           "description": "PromptTemplate overrides the prompt template path.\nRelative paths resolve against the city directory."
+        },
+        "session": {
+          "type": "string",
+          "description": "Session overrides the session transport (\"acp\")."
         },
         "provider": {
           "type": "string",
@@ -1070,6 +1107,10 @@
           "type": "string",
           "description": "PathCheck overrides the binary name used for PATH detection.\nWhen set, lookupProvider and detectProviderName use this instead\nof Command for exec.LookPath checks. Useful when Command is a\nshell wrapper (e.g. sh -c '...') but we need to verify the real\nbinary is installed."
         },
+        "supports_acp": {
+          "type": "boolean",
+          "description": "SupportsACP indicates the binary speaks the Agent Client Protocol\n(JSON-RPC 2.0 over stdio). When an agent sets session = \"acp\",\nits resolved provider must have SupportsACP = true."
+        },
         "supports_hooks": {
           "type": "boolean",
           "description": "SupportsHooks indicates the provider has an executable hook mechanism\n(settings.json, plugins, etc.) for lifecycle events."
@@ -1162,11 +1203,15 @@
       "properties": {
         "provider": {
           "type": "string",
-          "description": "Provider selects the session backend: \"fake\", \"fail\", \"subprocess\",\n\"exec:\u003cscript\u003e\", \"k8s\", or \"\" (default: tmux)."
+          "description": "Provider selects the session backend: \"fake\", \"fail\", \"subprocess\",\n\"acp\", \"exec:\u003cscript\u003e\", \"k8s\", or \"\" (default: tmux)."
         },
         "k8s": {
           "$ref": "#/$defs/K8sConfig",
           "description": "K8s holds Kubernetes-specific settings for the native K8s provider."
+        },
+        "acp": {
+          "$ref": "#/$defs/ACPSessionConfig",
+          "description": "ACP holds settings for the ACP (Agent Client Protocol) session provider."
         },
         "setup_timeout": {
           "type": "string",
