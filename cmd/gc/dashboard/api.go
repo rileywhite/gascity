@@ -1745,6 +1745,11 @@ func (h *APIHandler) handleSSEProxy(w http.ResponseWriter, r *http.Request) {
 	// We forward: "event: gc-event\nid: <seq>\ndata: <json>\n\n"
 	// The browser parses the event type from the JSON data payload and
 	// uses Last-Event-ID for automatic reconnection on disconnect.
+	//
+	// ASSUMPTION: upstream sends exactly one "data:" line per event (single-line
+	// JSON). Multi-line "data:" (valid per SSE spec) would produce split JSON
+	// fragments that fail JSON.parse on the client, falling through to a
+	// full-page refresh. This matches the upstream writeSSE implementation.
 	scanner := bufio.NewScanner(resp.Body)
 	var currentID string
 	for scanner.Scan() {

@@ -30,6 +30,9 @@
     // morph (13 API calls) but are debounced to prevent overload.
 
     // High-frequency observation events — activity panel only.
+    // MAINTENANCE: this allowlist must be updated when new observation event
+    // types are added upstream (internal/events/events.go). Unlisted types
+    // default to the state-change path, triggering a full-page refresh.
     var _observationTypes = {
         'agent.message': 1, 'agent.tool_call': 1, 'agent.tool_result': 1,
         'agent.thinking': 1, 'agent.output': 1, 'agent.idle': 1,
@@ -70,7 +73,11 @@
         }, 500);
     }
 
+    // Track last seen event ID for reconnection resume.
+    var _lastEventId = '';
+
     function _handleSSEEvent(e) {
+        if (e.lastEventId) _lastEventId = e.lastEventId;
         if (window.pauseRefresh) return;
         var eventType = '';
         try {
@@ -91,7 +98,9 @@
             evtSource.close();
         }
 
-        evtSource = new EventSource('/api/events');
+        var sseURL = '/api/events';
+        if (_lastEventId) sseURL += '?after_seq=' + encodeURIComponent(_lastEventId);
+        evtSource = new EventSource(sseURL);
 
         evtSource.addEventListener('connected', function() {
             window.sseConnected = true;
@@ -181,8 +190,13 @@
         panel.classList.toggle('collapsed');
     });
 
-    // After HTMX swap - morph preserves most state, but we need to re-init some things
-    document.body.addEventListener('htmx:afterSwap', function() {
+    // After full-dashboard HTMX swap — scoped to #dashboard-main to avoid
+    // firing on activity panel partial swaps (which would cause 3 API calls
+    // instead of the intended 1).
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        var target = evt.detail.target || evt.detail.elt;
+        if (!target || target.id !== 'dashboard-main') return;
+
         // Morph preserves expanded class, so we don't need to close panels anymore
         // Just check if we should resume refresh
         var hasExpanded = document.querySelector('.panel.expanded');
@@ -3023,24 +3037,6 @@
             }
         }
 
-        // Category filter buttons
-        document.addEventListener('click', function(e) {
-            var btn = e.target.closest('.tl-filter-btn');
-            if (!btn) return;
-            if (btn.getAttribute('data-filter') !== 'category') return;
-
-            // Update active state
-            var group = btn.closest('.tl-filter-group');
-            if (group) {
-                group.querySelectorAll('.tl-filter-btn').forEach(function(b) {
-                    b.classList.remove('active');
-                });
-            }
-            btn.classList.add('active');
-            activeCategory = btn.getAttribute('data-value');
-            applyFilters();
-        });
-
         // Dropdown filters
         if (rigFilter) {
             rigFilter.addEventListener('change', applyFilters);
@@ -3050,11 +3046,57 @@
         }
     }
 
+    // Document-level category filter click handler — registered once to
+    // avoid listener accumulation across repeated HTMX swaps.
+    var _timelineClickRegistered = false;
+    function _ensureTimelineClickHandler() {
+        if (_timelineClickRegistered) return;
+        _timelineClickRegistered = true;
+        document.addEventListener('click', function(e) {
+            var btn = e.target.closest('.tl-filter-btn');
+            if (!btn) return;
+            if (btn.getAttribute('data-filter') !== 'category') return;
+
+            var group = btn.closest('.tl-filter-group');
+            if (group) {
+                group.querySelectorAll('.tl-filter-btn').forEach(function(b) {
+                    b.classList.remove('active');
+                });
+            }
+            btn.classList.add('active');
+
+            // Re-trigger filter with the current initTimelineFilters closure.
+            var timeline = document.getElementById('activity-timeline');
+            if (timeline) {
+                var entries = timeline.querySelectorAll('.tl-entry');
+                var rigFilter = document.getElementById('tl-rig-filter');
+                var agentFilter = document.getElementById('tl-agent-filter');
+                var emptyMsg = document.getElementById('tl-empty-filtered');
+                var activeCategory = btn.getAttribute('data-value');
+                var selectedRig = rigFilter ? rigFilter.value : 'all';
+                var selectedAgent = agentFilter ? agentFilter.value : 'all';
+                var visibleCount = 0;
+                entries.forEach(function(entry) {
+                    var show = true;
+                    if (activeCategory !== 'all' && entry.getAttribute('data-category') !== activeCategory) show = false;
+                    if (selectedRig !== 'all' && entry.getAttribute('data-rig') !== selectedRig) show = false;
+                    if (selectedAgent !== 'all' && entry.getAttribute('data-agent') !== selectedAgent) show = false;
+                    if (show) { entry.classList.remove('tl-hidden'); visibleCount++; }
+                    else { entry.classList.add('tl-hidden'); }
+                });
+                if (emptyMsg) emptyMsg.style.display = visibleCount === 0 ? 'block' : 'none';
+            }
+        });
+    }
+
     // Init on page load
+    _ensureTimelineClickHandler();
     initTimelineFilters();
 
-    // Re-init after HTMX swaps
-    document.body.addEventListener('htmx:afterSwap', function() {
+    // Re-init after full-dashboard HTMX swaps only (not activity panel partials).
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        var target = evt.detail.target || evt.detail.elt;
+        if (!target || target.id !== 'dashboard-main') return;
         initTimelineFilters();
     });
 
