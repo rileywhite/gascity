@@ -582,6 +582,30 @@ op_ensure_ready() {
     op_start
 }
 
+# ensure_config_yaml creates a minimal .beads/config.yaml with prefix settings
+# if one doesn't exist or is missing the issue_prefix key. Fallback for when
+# bd init fails or doesn't create the file. Matches upstream EnsureConfigYAML.
+ensure_config_yaml() {
+    local beads_dir="$1"
+    local prefix="$2"
+    local config_file="$beads_dir/config.yaml"
+
+    mkdir -p "$beads_dir"
+
+    if [ -f "$config_file" ] && grep -q "issue_prefix" "$config_file" 2>/dev/null; then
+        return 0
+    fi
+
+    # Create minimal config.yaml with required prefix settings.
+    local tmp
+    tmp=$(mktemp "$config_file.tmp.XXXXXX")
+    cat > "$tmp" <<YAML
+issue_prefix: $prefix
+issue-prefix: ${prefix}-
+YAML
+    mv "$tmp" "$config_file"
+}
+
 # op_init initializes beads in a directory.
 # Args: <dir> <prefix>
 op_init() {
@@ -591,6 +615,16 @@ op_init() {
     if [ -z "$dir" ] || [ -z "$prefix" ]; then
         die "usage: gc-beads-bd init <dir> <prefix>"
     fi
+
+    # Filter BEADS_DIR from inherited environment to prevent bd from
+    # finding a parent directory's .beads/ database (upstream parity).
+    local beads_dir="$dir/.beads"
+    unset BEADS_DIR
+    export BEADS_DIR="$beads_dir"
+
+    # Custom bead types for bd (extracted from beads core in v0.46.0).
+    # GC_BEADS_CUSTOM_TYPES overrides the default SDK set.
+    local custom_types="${GC_BEADS_CUSTOM_TYPES:-molecule,convoy,message,event,gate,merge-request,agent,role,rig}"
 
     # If already initialized on disk, ensure the database is also registered
     # with the running server. This covers the case where bd init created the
@@ -602,6 +636,8 @@ op_init() {
         # Ensure issue_prefix is set (may be missing if bd init was run
         # manually or metadata was created without full initialization).
         bd config set issue_prefix "$prefix" --dir "$dir" 2>/dev/null || true
+        bd config set types.custom "$custom_types" --dir "$dir" 2>/dev/null || true
+        ensure_config_yaml "$beads_dir" "$prefix"
         exit 0
     fi
 
@@ -621,6 +657,26 @@ op_init() {
 
     # Set issue_prefix.
     bd config set issue_prefix "$prefix" --dir "$dir" 2>/dev/null || true
+
+    # Configure custom bead types (required since beads v0.46.0).
+    bd config set types.custom "$custom_types" --dir "$dir" 2>/dev/null || true
+
+    # Drop orphan database created by bd init (upstream gt-sv1h).
+    # bd init --prefix creates beads_<prefix> on the Dolt server, but we
+    # use <prefix> as the database name. Without cleanup, orphans accumulate.
+    local orphan_db="beads_${prefix}"
+    if [ "$orphan_db" != "$prefix" ]; then
+        server_sql "DROP DATABASE IF EXISTS \`$orphan_db\`" >/dev/null 2>&1 || true
+    fi
+
+    # Ensure config.yaml exists with correct prefix settings. Fallback
+    # in case bd init didn't create it (matches upstream EnsureConfigYAML).
+    ensure_config_yaml "$beads_dir" "$prefix"
+
+    # Ensure database has repository fingerprint (upstream GH #25).
+    # Idempotent — safe on both new and legacy databases.
+    # Without fingerprint, the bd daemon may fail to start silently.
+    (cd "$dir" && bd migrate --update-repo-id) 2>/dev/null || true
 
     # Patch metadata.json with SQL connection info and required fields.
     ensure_metadata "$dir/.beads/metadata.json" "$prefix"
