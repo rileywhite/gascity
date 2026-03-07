@@ -28,8 +28,8 @@ func (s *MemStore) Create(_ context.Context, op Operation) (Operation, error) {
 	if _, exists := s.ops[op.ID]; exists {
 		return Operation{}, fmt.Errorf("operation %q already exists", op.ID)
 	}
-	s.ops[op.ID] = op
-	return op, nil
+	s.ops[op.ID] = cloneOp(op)
+	return cloneOp(op), nil
 }
 
 // Get retrieves an operation by ID.
@@ -40,7 +40,7 @@ func (s *MemStore) Get(_ context.Context, id string) (Operation, error) {
 	if !ok {
 		return Operation{}, ErrNotFound
 	}
-	return op, nil
+	return cloneOp(op), nil
 }
 
 // Update replaces an existing operation.
@@ -50,7 +50,7 @@ func (s *MemStore) Update(_ context.Context, op Operation) error {
 	if _, ok := s.ops[op.ID]; !ok {
 		return ErrNotFound
 	}
-	s.ops[op.ID] = op
+	s.ops[op.ID] = cloneOp(op)
 	return nil
 }
 
@@ -69,7 +69,7 @@ func (s *MemStore) List(_ context.Context, filter Filter) ([]Operation, error) {
 		if filter.Phase != "" && op.Phase != filter.Phase {
 			continue
 		}
-		result = append(result, op)
+		result = append(result, cloneOp(op))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
@@ -81,4 +81,15 @@ func (s *MemStore) List(_ context.Context, filter Filter) ([]Operation, error) {
 		result = result[:filter.Limit]
 	}
 	return result, nil
+}
+
+func cloneOp(op Operation) Operation {
+	if op.Metadata != nil {
+		cp := make(map[string]string, len(op.Metadata))
+		for k, v := range op.Metadata {
+			cp[k] = v
+		}
+		op.Metadata = cp
+	}
+	return op
 }

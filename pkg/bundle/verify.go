@@ -50,7 +50,8 @@ func VerifyChecksum(bundleDir string, expected string) error {
 		if rel == "manifest.json" {
 			return nil
 		}
-		files = append(files, rel)
+		// Normalize to forward slashes immediately for cross-platform sort order.
+		files = append(files, filepath.ToSlash(rel))
 		return nil
 	})
 	if err != nil {
@@ -59,11 +60,13 @@ func VerifyChecksum(bundleDir string, expected string) error {
 
 	sort.Strings(files)
 	for _, rel := range files {
-		// Hash the forward-slash normalized path for cross-platform determinism.
-		if _, err := fmt.Fprintf(h, "%s\n", filepath.ToSlash(rel)); err != nil {
+		// Use length-prefixed framing to prevent ambiguous concatenation:
+		// <path-length>:<path><content-bytes>
+		// This ensures different file trees cannot produce identical byte streams.
+		if _, err := fmt.Fprintf(h, "%d:%s", len(rel), rel); err != nil {
 			return fmt.Errorf("hashing path %s: %w", rel, err)
 		}
-		f, err := os.Open(filepath.Join(bundleDir, rel))
+		f, err := os.Open(filepath.Join(bundleDir, filepath.FromSlash(rel)))
 		if err != nil {
 			return fmt.Errorf("opening %s: %w", rel, err)
 		}

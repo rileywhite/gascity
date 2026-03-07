@@ -33,6 +33,8 @@ var workspaceTransitions = []Transition[WorkspaceState]{
 	{WorkspaceFailed, WorkspaceDeleting, "delete requested"},
 	{WorkspaceFailed, WorkspaceResuming, "retry requested"},
 	{WorkspaceDeleting, WorkspaceDeleted, "deletion completed"},
+	// Note: deleting→failed→resuming→active is intentionally allowed.
+	// Callers must implement their own retry cap / circuit breaker.
 	{WorkspaceDeleting, WorkspaceFailed, "deletion failed"},
 }
 

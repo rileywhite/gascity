@@ -27,6 +27,7 @@ type Store interface {
 	// Update replaces an existing operation. Returns ErrNotFound if missing.
 	Update(ctx context.Context, op Operation) error
 
-	// List returns operations matching the filter. An empty filter returns all.
+	// List returns operations matching the filter, ordered by CreatedAt then ID.
+	// An empty filter returns all.
 	List(ctx context.Context, filter Filter) ([]Operation, error)
 }

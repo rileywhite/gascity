@@ -95,12 +95,12 @@ func computeChecksum(t *testing.T, dir string) string {
 		if rel == "manifest.json" {
 			return nil
 		}
-		files = append(files, rel)
+		files = append(files, filepath.ToSlash(rel))
 		return nil
 	})
 	sort.Strings(files)
 	for _, rel := range files {
-		_, _ = fmt.Fprintf(h, "%s\n", filepath.ToSlash(rel))
+		_, _ = fmt.Fprintf(h, "%d:%s", len(rel), rel)
 		data, err := os.ReadFile(filepath.Join(dir, rel))
 		if err != nil {
 			t.Fatal(err)

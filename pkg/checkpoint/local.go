@@ -45,25 +45,47 @@ func (s *LocalStore) Save(_ context.Context, m RecoveryManifest) error {
 	filename := fmt.Sprintf("%d.json", m.Epoch)
 	filePath := filepath.Join(wsDir, filename)
 
-	// Atomic write: temp file with unique suffix then rename.
-	tmp := fmt.Sprintf("%s.tmp.%d", filePath, time.Now().UnixNano())
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// Atomic write: unique temp file then rename.
+	tmpFile, err := os.CreateTemp(wsDir, fmt.Sprintf("%d.json.tmp.*", m.Epoch))
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmp := tmpFile.Name()
+	defer func() {
+		// Clean up temp file if still present (rename succeeded = no-op).
+		_ = os.Remove(tmp)
+	}()
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
 		return fmt.Errorf("writing checkpoint: %w", err)
 	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("closing temp file: %w", err)
+	}
 	if err := os.Rename(tmp, filePath); err != nil {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("renaming checkpoint: %w", err)
 	}
 
-	// Update latest symlink atomically: create temp symlink then rename.
+	// Update latest symlink only if this epoch >= the currently published epoch.
+	// This prevents out-of-order writes from rolling back the latest pointer.
 	latestPath := filepath.Join(wsDir, "latest")
-	tmpLink := fmt.Sprintf("%s.tmp.%d", latestPath, time.Now().UnixNano())
-	if err := os.Symlink(filename, tmpLink); err != nil {
-		return fmt.Errorf("creating latest symlink: %w", err)
+	shouldUpdate := true
+	if target, err := os.Readlink(latestPath); err == nil {
+		currentEpochStr := strings.TrimSuffix(target, ".json")
+		if currentEpoch, err := strconv.ParseInt(currentEpochStr, 10, 64); err == nil {
+			shouldUpdate = m.Epoch >= currentEpoch
+		}
 	}
-	if err := os.Rename(tmpLink, latestPath); err != nil {
-		_ = os.Remove(tmpLink)
-		return fmt.Errorf("updating latest symlink: %w", err)
+
+	if shouldUpdate {
+		// Symlink update is best-effort: if symlinks are unsupported
+		// (e.g., unprivileged Windows), Load falls back to scanning.
+		tmpLink := fmt.Sprintf("%s.tmp.%d", latestPath, time.Now().UnixNano())
+		if err := os.Symlink(filename, tmpLink); err == nil {
+			if err := os.Rename(tmpLink, latestPath); err != nil {
+				_ = os.Remove(tmpLink)
+			}
+		}
 	}
 
 	return nil
