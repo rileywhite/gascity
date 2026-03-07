@@ -212,11 +212,24 @@ func setMeta(store beads.Store, id, key, value string, stderr io.Writer) error {
 // closeBead sets final metadata on a session bead and closes it.
 // This completes the bead's lifecycle record. The close_reason distinguishes
 // why the bead was closed (e.g., "orphaned", "suspended").
+//
+// Follows the commit-signal pattern: metadata is written first, and Close
+// is only called if all writes succeed. If any write fails, the bead stays
+// open so the next tick retries the entire sequence.
 func closeBead(store beads.Store, id, reason string, now time.Time, stderr io.Writer) {
-	setMeta(store, id, "state", reason, stderr)                                      //nolint:errcheck
-	setMeta(store, id, "close_reason", reason, stderr)                               //nolint:errcheck
-	setMeta(store, id, "closed_at", now.Format("2006-01-02T15:04:05Z07:00"), stderr) //nolint:errcheck
-	setMeta(store, id, "synced_at", now.Format("2006-01-02T15:04:05Z07:00"), stderr) //nolint:errcheck
+	ts := now.Format("2006-01-02T15:04:05Z07:00")
+	if setMeta(store, id, "state", reason, stderr) != nil {
+		return
+	}
+	if setMeta(store, id, "close_reason", reason, stderr) != nil {
+		return
+	}
+	if setMeta(store, id, "closed_at", ts, stderr) != nil {
+		return
+	}
+	if setMeta(store, id, "synced_at", ts, stderr) != nil {
+		return
+	}
 	if err := store.Close(id); err != nil {
 		fmt.Fprintf(stderr, "session beads: closing %s: %v\n", id, err) //nolint:errcheck
 	}
