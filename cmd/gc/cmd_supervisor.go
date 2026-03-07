@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,11 +19,9 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/api"
-	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/session"
 	"github.com/gastownhall/gascity/internal/supervisor"
 	"github.com/spf13/cobra"
@@ -280,18 +277,16 @@ func runSupervisor(stdout, stderr io.Writer) int {
 	var mu sync.RWMutex
 	cities := make(map[string]*managedCity)
 
-	// Start API server with a multi-city state dispatcher.
-	mcs := &multiCityState{cities: cities, mu: &mu, startedAt: time.Now()}
+	// Start API server with city-namespaced routing (Phase 2).
+	startedAt := time.Now()
+	mcs := &multiCityState{cities: cities, mu: &mu, startedAt: startedAt}
 	bind := supCfg.Supervisor.BindOrDefault()
 	port := supCfg.Supervisor.PortOrDefault()
 	nonLocal := bind != "127.0.0.1" && bind != "localhost" && bind != "::1"
-	var apiSrv *api.Server
 	if nonLocal {
-		apiSrv = api.NewReadOnly(mcs)
 		fmt.Fprintf(stderr, "gc supervisor: binding to %s — mutation endpoints disabled (non-localhost)\n", bind) //nolint:errcheck
-	} else {
-		apiSrv = api.New(mcs)
 	}
+	apiMux := api.NewSupervisorMux(mcs, nonLocal, version, startedAt)
 	addr := net.JoinHostPort(bind, strconv.Itoa(port))
 	apiLis, apiErr := net.Listen("tcp", addr)
 	if apiErr != nil {
@@ -299,14 +294,14 @@ func runSupervisor(stdout, stderr io.Writer) int {
 		// Non-fatal — continue without API.
 	} else {
 		go func() {
-			if err := apiSrv.Serve(apiLis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := apiMux.Serve(apiLis); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				fmt.Fprintf(stderr, "gc supervisor: api: %v\n", err) //nolint:errcheck
 			}
 		}()
 		defer func() {
 			shutCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 			defer c()
-			apiSrv.Shutdown(shutCtx) //nolint:errcheck
+			apiMux.Shutdown(shutCtx) //nolint:errcheck
 		}()
 		fmt.Fprintf(stdout, "Supervisor API listening on http://%s\n", addr) //nolint:errcheck
 	}
@@ -795,114 +790,38 @@ func supervisorBuildAgentsFn(cityPath, cityName string, stderr io.Writer) func(*
 	}
 }
 
-// multiCityState implements api.State by delegating to the first registered
-// city's controllerState. This is the v0 compatibility behavior described
-// in the design doc — Phase 2 adds proper city-namespaced routing.
+// multiCityState implements api.CityResolver for the supervisor API.
+// It provides city lookup by name and city listing for the
+// SupervisorMux routing layer.
 type multiCityState struct {
 	cities    map[string]*managedCity
 	mu        *sync.RWMutex
 	startedAt time.Time
 }
 
-// firstCity returns the controllerState of the first city (by sorted path),
-// or nil if no cities are running. Deterministic ordering ensures API
-// requests always route to the same city.
-func (m *multiCityState) firstCity() *controllerState {
+// ListCities returns info about all managed cities.
+func (m *multiCityState) ListCities() []api.CityInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if len(m.cities) == 0 {
-		return nil
+	out := make([]api.CityInfo, 0, len(m.cities))
+	for path, mc := range m.cities {
+		out = append(out, api.CityInfo{
+			Name:    mc.cr.cityName,
+			Path:    path,
+			Running: mc.cr.cs != nil,
+		})
 	}
-	paths := make([]string, 0, len(m.cities))
-	for p := range m.cities {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		if mc := m.cities[p]; mc.cr.cs != nil {
+	return out
+}
+
+// CityState returns the api.State for a named city, or nil if not found/not running.
+func (m *multiCityState) CityState(name string) api.State {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, mc := range m.cities {
+		if mc.cr.cityName == name && mc.cr.cs != nil {
 			return mc.cr.cs
 		}
 	}
 	return nil
-}
-
-// --- api.State implementation (delegates to first city) ---
-
-func (m *multiCityState) Config() *config.City {
-	if cs := m.firstCity(); cs != nil {
-		return cs.Config()
-	}
-	return &config.City{}
-}
-
-func (m *multiCityState) SessionProvider() session.Provider {
-	if cs := m.firstCity(); cs != nil {
-		return cs.SessionProvider()
-	}
-	// Return a no-op fake so API handlers don't nil-panic when zero cities are running.
-	return &session.Fake{}
-}
-
-func (m *multiCityState) BeadStore(rig string) beads.Store {
-	if cs := m.firstCity(); cs != nil {
-		return cs.BeadStore(rig)
-	}
-	return nil // API handlers check for nil bead stores.
-}
-
-func (m *multiCityState) BeadStores() map[string]beads.Store {
-	if cs := m.firstCity(); cs != nil {
-		return cs.BeadStores()
-	}
-	return map[string]beads.Store{}
-}
-
-func (m *multiCityState) MailProvider(rig string) mail.Provider {
-	if cs := m.firstCity(); cs != nil {
-		return cs.MailProvider(rig)
-	}
-	return nil // API handlers check for nil mail providers.
-}
-
-func (m *multiCityState) MailProviders() map[string]mail.Provider {
-	if cs := m.firstCity(); cs != nil {
-		return cs.MailProviders()
-	}
-	return map[string]mail.Provider{}
-}
-
-func (m *multiCityState) EventProvider() events.Provider {
-	if cs := m.firstCity(); cs != nil {
-		return cs.EventProvider()
-	}
-	return nil // API handlers check for nil event providers.
-}
-
-func (m *multiCityState) CityName() string {
-	if cs := m.firstCity(); cs != nil {
-		return cs.CityName()
-	}
-	return ""
-}
-
-func (m *multiCityState) CityPath() string {
-	if cs := m.firstCity(); cs != nil {
-		return cs.CityPath()
-	}
-	return ""
-}
-
-func (m *multiCityState) Version() string {
-	return version
-}
-
-func (m *multiCityState) StartedAt() time.Time {
-	return m.startedAt
-}
-
-func (m *multiCityState) IsQuarantined(sessionName string) bool {
-	if cs := m.firstCity(); cs != nil {
-		return cs.IsQuarantined(sessionName)
-	}
-	return false
 }
