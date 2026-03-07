@@ -100,11 +100,11 @@ func computeChecksum(t *testing.T, dir string) string {
 	})
 	sort.Strings(files)
 	for _, rel := range files {
-		_, _ = fmt.Fprintf(h, "%d:%s", len(rel), rel)
-		data, err := os.ReadFile(filepath.Join(dir, rel))
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
 		}
+		_, _ = fmt.Fprintf(h, "%d:%s%d:", len(rel), rel, len(data))
 		h.Write(data)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))

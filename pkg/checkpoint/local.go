@@ -95,29 +95,13 @@ func (s *LocalStore) Save(_ context.Context, m RecoveryManifest) error {
 // the "latest" symlink. Falls back to scanning epoch files if the symlink
 // is missing.
 func (s *LocalStore) Load(_ context.Context, workspaceID string) (RecoveryManifest, error) {
+	if err := validateWorkspaceID(workspaceID); err != nil {
+		return RecoveryManifest{}, err
+	}
 	wsDir := filepath.Join(s.dir, workspaceID)
 
-	// Try the latest symlink first.
-	latestPath := filepath.Join(wsDir, "latest")
-	target, err := os.Readlink(latestPath)
-	if err == nil {
-		// Reject symlink targets containing path separators to prevent escape.
-		if strings.ContainsAny(target, "/\\") {
-			return RecoveryManifest{}, fmt.Errorf("checkpoint: latest symlink target %q contains path separator", target)
-		}
-		m, loadErr := s.readManifest(filepath.Join(wsDir, target))
-		if loadErr != nil {
-			// Symlink exists but target is broken — surface the error
-			// rather than silently rolling back to an older epoch.
-			return RecoveryManifest{}, fmt.Errorf("checkpoint: latest symlink target unreadable: %w", loadErr)
-		}
-		return m, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return RecoveryManifest{}, fmt.Errorf("checkpoint: reading latest symlink: %w", err)
-	}
-
-	// Fallback: symlink does not exist, find the highest epoch file.
+	// Always scan epoch files and return the highest. This avoids TOCTOU
+	// races on the "latest" symlink when concurrent saves are in flight.
 	manifests, err := s.listManifests(wsDir)
 	if err != nil {
 		return RecoveryManifest{}, err
@@ -130,6 +114,9 @@ func (s *LocalStore) Load(_ context.Context, workspaceID string) (RecoveryManife
 
 // List returns all recovery manifests for a workspace ordered by epoch.
 func (s *LocalStore) List(_ context.Context, workspaceID string) ([]RecoveryManifest, error) {
+	if err := validateWorkspaceID(workspaceID); err != nil {
+		return nil, err
+	}
 	wsDir := filepath.Join(s.dir, workspaceID)
 	return s.listManifests(wsDir)
 }
@@ -147,6 +134,19 @@ func (s *LocalStore) readManifest(path string) (RecoveryManifest, error) {
 		return RecoveryManifest{}, fmt.Errorf("invalid manifest at %s: %w", filepath.Base(path), err)
 	}
 	return m, nil
+}
+
+func validateWorkspaceID(id string) error {
+	if id == "" {
+		return fmt.Errorf("checkpoint: empty workspace ID")
+	}
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+		return fmt.Errorf("checkpoint: invalid workspace ID %q", id)
+	}
+	if id == "latest" || id == "." {
+		return fmt.Errorf("checkpoint: reserved workspace ID %q", id)
+	}
+	return nil
 }
 
 func (s *LocalStore) listManifests(wsDir string) ([]RecoveryManifest, error) {

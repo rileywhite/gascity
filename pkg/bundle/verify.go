@@ -60,10 +60,14 @@ func VerifyChecksum(bundleDir string, expected string) error {
 
 	sort.Strings(files)
 	for _, rel := range files {
-		// Use length-prefixed framing to prevent ambiguous concatenation:
-		// <path-length>:<path><content-bytes>
-		// This ensures different file trees cannot produce identical byte streams.
-		if _, err := fmt.Fprintf(h, "%d:%s", len(rel), rel); err != nil {
+		fi, err := os.Stat(filepath.Join(bundleDir, filepath.FromSlash(rel)))
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", rel, err)
+		}
+		// Length-prefixed framing for both path and content to prevent
+		// ambiguous concatenation across different file trees:
+		// <path-length>:<path><content-length>:
+		if _, err := fmt.Fprintf(h, "%d:%s%d:", len(rel), rel, fi.Size()); err != nil {
 			return fmt.Errorf("hashing path %s: %w", rel, err)
 		}
 		f, err := os.Open(filepath.Join(bundleDir, filepath.FromSlash(rel)))
