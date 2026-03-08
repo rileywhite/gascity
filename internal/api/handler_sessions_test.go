@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -183,5 +184,160 @@ func TestHandleSessionNoCityStore(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("got status %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestHandleSessionWake(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Held Session")
+
+	// Set hold metadata.
+	_ = fs.cityBeadStore.SetMetadataBatch(info.ID, map[string]string{
+		"held_until":   "9999-12-31T23:59:59Z",
+		"sleep_reason": "user-hold",
+	})
+
+	w := httptest.NewRecorder()
+	r := newPostRequest("/v0/session/"+info.ID+"/wake", nil)
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify hold cleared.
+	b, _ := fs.cityBeadStore.Get(info.ID)
+	if b.Metadata["held_until"] != "" {
+		t.Errorf("held_until should be cleared, got %q", b.Metadata["held_until"])
+	}
+	if b.Metadata["sleep_reason"] != "" {
+		t.Errorf("sleep_reason should be cleared, got %q", b.Metadata["sleep_reason"])
+	}
+}
+
+func TestHandleSessionWakeClosed(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Closed Session")
+	mgr := session.NewManager(fs.cityBeadStore, fs.sp)
+	_ = mgr.Close(info.ID)
+
+	w := httptest.NewRecorder()
+	r := newPostRequest("/v0/session/"+info.ID+"/wake", nil)
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("got status %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+}
+
+func TestHandleSessionGetByTemplateName(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Named Session")
+
+	// Set template metadata on the bead so name resolution works.
+	_ = fs.cityBeadStore.SetMetadataBatch(info.ID, map[string]string{
+		"template": "overseer",
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/v0/session/overseer", nil)
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.ID != info.ID {
+		t.Errorf("got ID %q, want %q", resp.ID, info.ID)
+	}
+}
+
+func TestHandleSessionPatchTitle(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Original")
+
+	body := `{"title":"Updated Title"}`
+	req := httptest.NewRequest("PATCH", "/v0/session/"+info.ID, strings.NewReader(body))
+	req.Header.Set("X-GC-Request", "true")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Title != "Updated Title" {
+		t.Errorf("got title %q, want %q", resp.Title, "Updated Title")
+	}
+}
+
+func TestHandleSessionPatchImmutableField(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Test")
+
+	body := `{"template":"hacked"}`
+	req := httptest.NewRequest("PATCH", "/v0/session/"+info.ID, strings.NewReader(body))
+	req.Header.Set("X-GC-Request", "true")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("got status %d, want %d; body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestHandleSessionListIncludesReason(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Held")
+
+	// Set sleep reason on bead.
+	_ = fs.cityBeadStore.SetMetadataBatch(info.ID, map[string]string{
+		"sleep_reason": "user-hold",
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/v0/sessions", nil)
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Parse into raw JSON to check for reason field.
+	var raw struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(raw.Items) != 1 {
+		t.Fatalf("got %d items, want 1", len(raw.Items))
+	}
+	var item sessionResponse
+	if err := json.Unmarshal(raw.Items[0], &item); err != nil {
+		t.Fatalf("unmarshal item: %v", err)
+	}
+	if item.Reason != "user-hold" {
+		t.Errorf("got reason %q, want %q", item.Reason, "user-hold")
 	}
 }
