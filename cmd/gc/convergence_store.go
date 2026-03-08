@@ -12,14 +12,55 @@ import (
 )
 
 // convergenceStoreAdapter bridges beads.Store to convergence.Store.
+// It maintains an in-memory index of active convergence beads (bead ID →
+// target agent) to avoid O(n) scans on every tick. The index is populated
+// once at startup and maintained on state transitions via SetMetadata.
+// No mutex is needed — single-writer event loop.
 type convergenceStoreAdapter struct {
-	store beads.Store
+	store       beads.Store
+	activeIndex map[string]string // bead ID → target agent; nil until populateIndex
 }
 
 var _ convergence.Store = (*convergenceStoreAdapter)(nil)
 
 func newConvergenceStoreAdapter(store beads.Store) *convergenceStoreAdapter {
 	return &convergenceStoreAdapter{store: store}
+}
+
+// populateIndex performs a one-time scan of all beads to build the
+// active index. Called after startup reconciliation completes.
+func (a *convergenceStoreAdapter) populateIndex() error {
+	all, err := a.store.List()
+	if err != nil {
+		return err
+	}
+	idx := make(map[string]string)
+	for _, b := range all {
+		if b.Type != "convergence" || b.Status == "closed" {
+			continue
+		}
+		if b.Metadata == nil {
+			continue
+		}
+		state := b.Metadata[convergence.FieldState]
+		if state == convergence.StateActive || state == convergence.StateWaitingManual {
+			idx[b.ID] = b.Metadata[convergence.FieldTarget]
+		}
+	}
+	a.activeIndex = idx
+	return nil
+}
+
+// activeBeadIDs returns the bead IDs currently in the active index.
+func (a *convergenceStoreAdapter) activeBeadIDs() []string {
+	if a.activeIndex == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(a.activeIndex))
+	for id := range a.activeIndex {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (a *convergenceStoreAdapter) GetBead(id string) (convergence.BeadInfo, error) {
@@ -42,11 +83,38 @@ func (a *convergenceStoreAdapter) GetMetadata(id string) (map[string]string, err
 }
 
 func (a *convergenceStoreAdapter) SetMetadata(id, key, value string) error {
-	return a.store.SetMetadata(id, key, value)
+	if err := a.store.SetMetadata(id, key, value); err != nil {
+		return err
+	}
+	// Maintain active index on state transitions.
+	if a.activeIndex != nil && key == convergence.FieldState {
+		switch value {
+		case convergence.StateActive, convergence.StateWaitingManual:
+			// Add to index. Read target if not already indexed.
+			if _, ok := a.activeIndex[id]; !ok {
+				b, err := a.store.Get(id)
+				if err != nil {
+					return fmt.Errorf("reading bead %q for active index: %w", id, err)
+				}
+				if b.Metadata != nil {
+					a.activeIndex[id] = b.Metadata[convergence.FieldTarget]
+				}
+			}
+		case convergence.StateTerminated, convergence.StateCreating:
+			delete(a.activeIndex, id)
+		}
+	}
+	return nil
 }
 
 func (a *convergenceStoreAdapter) CloseBead(id string) error {
-	return a.store.Close(id)
+	if err := a.store.Close(id); err != nil {
+		return err
+	}
+	if a.activeIndex != nil {
+		delete(a.activeIndex, id)
+	}
+	return nil
 }
 
 func (a *convergenceStoreAdapter) Children(parentID string) ([]convergence.BeadInfo, error) {
@@ -84,8 +152,10 @@ func (a *convergenceStoreAdapter) PourWisp(parentID, formula, idempotencyKey str
 	if err != nil {
 		return "", err
 	}
-	// Set the idempotency key on the wisp.
-	if setErr := a.store.SetMetadata(wispID, "idempotency_key", idempotencyKey); setErr != nil {
+	// Set the idempotency key on the wisp atomically (single lock for MemStore/FileStore).
+	if setErr := a.store.SetMetadataBatch(wispID, map[string]string{
+		"idempotency_key": idempotencyKey,
+	}); setErr != nil {
 		return wispID, fmt.Errorf("wisp created (%s) but failed to set idempotency key: %w", wispID, setErr)
 	}
 	return wispID, nil
@@ -126,6 +196,17 @@ func (a *convergenceStoreAdapter) findByKeyScan(key string) (string, bool, error
 }
 
 func (a *convergenceStoreAdapter) CountActiveConvergenceLoops(targetAgent string) (int, error) {
+	// Use the in-memory index if populated.
+	if a.activeIndex != nil {
+		count := 0
+		for _, target := range a.activeIndex {
+			if target == targetAgent {
+				count++
+			}
+		}
+		return count, nil
+	}
+	// Fallback: full scan (before index is populated at startup).
 	all, err := a.store.List()
 	if err != nil {
 		return 0, err

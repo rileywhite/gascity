@@ -212,6 +212,50 @@ func TestCreateHandler_InvalidGateConfig(t *testing.T) {
 	}
 }
 
+func TestCreateHandler_StateCreatingBeforeActive(t *testing.T) {
+	store := newFakeStore()
+	emitter := &fakeEmitter{}
+	handler := &Handler{
+		Store:   store,
+		Emitter: emitter,
+		Clock:   time.Now,
+	}
+
+	params := CreateParams{
+		Formula:       "test-formula",
+		Target:        "test-agent",
+		MaxIterations: 3,
+		GateMode:      GateModeManual,
+	}
+
+	_, err := handler.CreateHandler(context.Background(), params)
+	if err != nil {
+		t.Fatalf("CreateHandler returned error: %v", err)
+	}
+
+	// Verify write ordering: StateCreating must appear before StateActive.
+	creatingIdx := -1
+	activeIdx := -1
+	for i, key := range store.WriteLog {
+		if key == FieldState {
+			if creatingIdx == -1 {
+				creatingIdx = i
+			} else if activeIdx == -1 {
+				activeIdx = i
+			}
+		}
+	}
+	if creatingIdx == -1 {
+		t.Fatal("expected at least one FieldState write (creating)")
+	}
+	if activeIdx == -1 {
+		t.Fatal("expected a second FieldState write (active)")
+	}
+	if creatingIdx >= activeIdx {
+		t.Errorf("StateCreating (index %d) must be written before StateActive (index %d)", creatingIdx, activeIdx)
+	}
+}
+
 func TestCreateHandler_DefaultGateMode(t *testing.T) {
 	store := newFakeStore()
 	emitter := &fakeEmitter{}

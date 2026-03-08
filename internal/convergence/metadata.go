@@ -44,6 +44,7 @@ const VarPrefix = "var."
 
 // State values for convergence.state.
 const (
+	StateCreating      = "creating" // set immediately after bead creation; reconciler terminates partial creations
 	StateActive        = "active"
 	StateWaitingManual = "waiting_manual"
 	StateTerminated    = "terminated"
@@ -66,9 +67,10 @@ const (
 
 // TerminalReason values for convergence.terminal_reason.
 const (
-	TerminalApproved      = "approved"
-	TerminalNoConvergence = "no_convergence"
-	TerminalStopped       = "stopped"
+	TerminalApproved        = "approved"
+	TerminalNoConvergence   = "no_convergence"
+	TerminalStopped         = "stopped"
+	TerminalPartialCreation = "partial_creation"
 )
 
 // GateOutcome values for convergence.gate_outcome.

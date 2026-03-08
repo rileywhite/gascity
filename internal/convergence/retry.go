@@ -78,6 +78,11 @@ func (h *Handler) RetryHandler(_ context.Context, sourceBeadID, _ string, maxIte
 		return cause
 	}
 
+	// Mark as creating so the reconciler can detect partial creation.
+	if err := h.Store.SetMetadata(newBeadID, FieldState, StateCreating); err != nil {
+		return RetryResult{}, closeBead(fmt.Errorf("setting creating state: %w", err))
+	}
+
 	// Step 6: Set metadata on new bead.
 	metaWrites := []struct{ key, value string }{
 		{FieldFormula, formula},

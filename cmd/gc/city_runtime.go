@@ -53,8 +53,9 @@ type CityRuntime struct {
 	// Bead-driven reconciler state (Phase 2f).
 	sessionDrains *drainTracker // in-memory drain tracker; nil when bead reconciler disabled
 
-	convHandler      *convergence.Handler    // nil until bead store available
-	convergenceReqCh chan convergenceRequest // receives CLI commands from controller.sock
+	convHandler      *convergence.Handler     // nil until bead store available
+	convStoreAdapter *convergenceStoreAdapter // typed reference; avoids type assertions in tick/reconcile
+	convergenceReqCh chan convergenceRequest  // receives CLI commands from controller.sock
 
 	shutdownOnce   sync.Once
 	logPrefix      string // "gc start" or "gc supervisor"

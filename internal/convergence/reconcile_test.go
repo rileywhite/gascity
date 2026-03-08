@@ -102,6 +102,52 @@ func TestReconcile_MissingState_WispExists_Adopts(t *testing.T) {
 	}
 }
 
+// --- Path 1b: StateCreating (partial creation) ---
+
+func TestReconcile_StateCreating_TerminatesPartialCreation(t *testing.T) {
+	rec, store, _ := setupReconciler(t)
+
+	// Bead stuck in "creating" state — creation was interrupted.
+	store.addBead("root-1", "in_progress", "", "", map[string]string{
+		FieldState: StateCreating,
+	})
+
+	report, err := rec.ReconcileBeads(context.Background(), []string{"root-1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Recovered != 1 {
+		t.Errorf("Recovered = %d, want 1", report.Recovered)
+	}
+	if report.Errors != 0 {
+		t.Errorf("Errors = %d, want 0", report.Errors)
+	}
+
+	d := report.Details[0]
+	if d.Action != "completed_terminal" {
+		t.Errorf("Action = %q, want %q", d.Action, "completed_terminal")
+	}
+	if d.Error != nil {
+		t.Errorf("unexpected error: %v", d.Error)
+	}
+
+	// Verify the bead is now terminated and closed.
+	meta, _ := store.GetMetadata("root-1")
+	if meta[FieldState] != StateTerminated {
+		t.Errorf("state = %q, want %q", meta[FieldState], StateTerminated)
+	}
+	if meta[FieldTerminalReason] != TerminalPartialCreation {
+		t.Errorf("terminal_reason = %q, want %q", meta[FieldTerminalReason], TerminalPartialCreation)
+	}
+	if meta[FieldTerminalActor] != "recovery" {
+		t.Errorf("terminal_actor = %q, want %q", meta[FieldTerminalActor], "recovery")
+	}
+	beadInfo, _ := store.GetBead("root-1")
+	if beadInfo.Status != "closed" {
+		t.Errorf("bead status = %q, want %q", beadInfo.Status, "closed")
+	}
+}
+
 // --- Path 2: Terminated but not closed ---
 
 func TestReconcile_TerminatedNotClosed_CompletesClosure(t *testing.T) {

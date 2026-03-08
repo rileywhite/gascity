@@ -68,9 +68,13 @@ func (r *Reconciler) reconcileBead(ctx context.Context, beadID string) Reconcile
 
 	switch state {
 	case "":
-		// Path 1: Missing/empty state — the bead was created but the
+		// Path 1a: Missing/empty state — the bead was created but the
 		// convergence loop never started (or the state write was lost).
 		return r.reconcileMissingState(ctx, beadID, meta)
+
+	case StateCreating:
+		// Path 1b: Creation was interrupted. Terminate the partial bead.
+		return r.reconcileCreating(beadID)
 
 	case StateTerminated:
 		// Path 2: state=terminated but bead still in_progress — the
@@ -190,6 +194,36 @@ func (r *Reconciler) reconcileMissingState(ctx context.Context, beadID string, m
 	}
 
 	return ReconcileDetail{BeadID: beadID, Action: "poured_wisp"}
+}
+
+// --- Path 1b: state=creating (partial creation) ---
+
+func (r *Reconciler) reconcileCreating(beadID string) ReconcileDetail {
+	if err := r.Handler.Store.SetMetadata(beadID, FieldTerminalReason, TerminalPartialCreation); err != nil {
+		return ReconcileDetail{
+			BeadID: beadID, Action: "completed_terminal",
+			Error: fmt.Errorf("setting terminal_reason: %w", err),
+		}
+	}
+	if err := r.Handler.Store.SetMetadata(beadID, FieldTerminalActor, "recovery"); err != nil {
+		return ReconcileDetail{
+			BeadID: beadID, Action: "completed_terminal",
+			Error: fmt.Errorf("setting terminal_actor: %w", err),
+		}
+	}
+	if err := r.Handler.Store.SetMetadata(beadID, FieldState, StateTerminated); err != nil {
+		return ReconcileDetail{
+			BeadID: beadID, Action: "completed_terminal",
+			Error: fmt.Errorf("setting state to terminated: %w", err),
+		}
+	}
+	if err := r.Handler.Store.CloseBead(beadID); err != nil {
+		return ReconcileDetail{
+			BeadID: beadID, Action: "completed_terminal",
+			Error: fmt.Errorf("closing bead: %w", err),
+		}
+	}
+	return ReconcileDetail{BeadID: beadID, Action: "completed_terminal"}
 }
 
 // --- Path 2: state=terminated but bead not closed ---

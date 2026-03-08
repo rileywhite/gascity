@@ -74,6 +74,11 @@ func (h *Handler) CreateHandler(_ context.Context, params CreateParams) (CreateR
 		return cause
 	}
 
+	// Mark as creating so the reconciler can detect partial creation.
+	if err := h.Store.SetMetadata(beadID, FieldState, StateCreating); err != nil {
+		return CreateResult{}, closeBead(fmt.Errorf("setting creating state: %w", err))
+	}
+
 	// Step 2: Set all metadata fields.
 	metaWrites := []struct{ key, value string }{
 		{FieldFormula, params.Formula},
