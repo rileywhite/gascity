@@ -63,6 +63,14 @@ func TestMaterializeBuiltinPacks(t *testing.T) {
 		}
 	}
 
+	// Verify dolt scripts/runtime.sh exists and is executable.
+	runtimeSh := filepath.Join(dir, citylayout.SystemPacksRoot, "dolt", "scripts", "runtime.sh")
+	if info, err := os.Stat(runtimeSh); err != nil {
+		t.Errorf("dolt scripts/runtime.sh missing: %v", err)
+	} else if info.Mode()&0o111 == 0 {
+		t.Errorf("dolt scripts/runtime.sh not executable: mode %v", info.Mode())
+	}
+
 	// Verify formulas exist.
 	formulasDir := filepath.Join(dir, citylayout.SystemPacksRoot, "dolt", "formulas")
 	if _, err := os.Stat(formulasDir); err != nil {
