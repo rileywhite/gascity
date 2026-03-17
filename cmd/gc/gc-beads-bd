@@ -201,7 +201,7 @@ save_state() {
 
 # load_state_field extracts a field from dolt-state.json (no jq dependency).
 load_state_field() {
-    [ -f "$STATE_FILE" ] || return
+    [ -f "$STATE_FILE" ] || return 0
     sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' "$STATE_FILE" | head -1
 }
 
