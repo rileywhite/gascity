@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
@@ -3378,5 +3379,131 @@ func TestOneArgSlingInlineTextRequiresTarget(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for inline text with 1 arg")
+	}
+}
+
+func TestSlingStdinSingleLine(t *testing.T) {
+	// --stdin with a single line creates a bead with title only.
+	runner := newFakeRunner()
+	sp := runtime.NewFake()
+	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
+	a := config.Agent{Name: "mayor"}
+	deps, stdout, stderr := testDeps(cfg, sp, runner.run)
+
+	// Override slingStdin to provide test input.
+	old := slingStdin
+	slingStdin = func() io.Reader { return strings.NewReader("fix login bug\n") }
+	defer func() { slingStdin = old }()
+
+	// Simulate what cmdSling does for --stdin: read stdin, create bead, sling it.
+	content := "fix login bug"
+	created, err := deps.Store.Create(beads.Bead{Title: content, Type: "task"})
+	if err != nil {
+		t.Fatalf("creating bead: %v", err)
+	}
+
+	opts := testOpts(a, created.ID)
+	code := doSling(opts, deps, nil)
+	if code != 0 {
+		t.Fatalf("doSling returned %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Slung "+created.ID) {
+		t.Errorf("stdout = %q, want to contain 'Slung %s'", stdout.String(), created.ID)
+	}
+
+	// Verify the bead has no description.
+	got, err := deps.Store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("getting bead: %v", err)
+	}
+	if got.Description != "" {
+		t.Errorf("bead description = %q, want empty", got.Description)
+	}
+}
+
+func TestSlingStdinMultiLine(t *testing.T) {
+	// --stdin with multiple lines: first line = title, rest = description.
+	runner := newFakeRunner()
+	sp := runtime.NewFake()
+	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
+	a := config.Agent{Name: "mayor"}
+	deps, stdout, stderr := testDeps(cfg, sp, runner.run)
+
+	old := slingStdin
+	slingStdin = func() io.Reader {
+		return strings.NewReader("fix login bug\nThe login page returns 500\nwhen email has a plus sign\n")
+	}
+	defer func() { slingStdin = old }()
+
+	// Create bead with description (simulating the stdin split).
+	created, err := deps.Store.Create(beads.Bead{
+		Title:       "fix login bug",
+		Description: "The login page returns 500\nwhen email has a plus sign",
+		Type:        "task",
+	})
+	if err != nil {
+		t.Fatalf("creating bead: %v", err)
+	}
+
+	opts := testOpts(a, created.ID)
+	code := doSling(opts, deps, nil)
+	if code != 0 {
+		t.Fatalf("doSling returned %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Slung "+created.ID) {
+		t.Errorf("stdout = %q, want to contain 'Slung %s'", stdout.String(), created.ID)
+	}
+
+	// Verify bead has description.
+	got, err := deps.Store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("getting bead: %v", err)
+	}
+	if got.Description != "The login page returns 500\nwhen email has a plus sign" {
+		t.Errorf("bead description = %q, want multi-line description", got.Description)
+	}
+}
+
+func TestSlingStdinEmpty(t *testing.T) {
+	// --stdin with empty input returns error.
+	var stderr bytes.Buffer
+	cmd := newSlingCmd(&bytes.Buffer{}, &stderr)
+	cmd.SetArgs([]string{"mayor", "--stdin"})
+
+	old := slingStdin
+	slingStdin = func() io.Reader { return strings.NewReader("") }
+	defer func() { slingStdin = old }()
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for empty stdin")
+	}
+	if !strings.Contains(stderr.String(), "no input received") {
+		t.Errorf("stderr = %q, want to contain 'no input received'", stderr.String())
+	}
+}
+
+func TestSlingStdinMutuallyExclusiveWithFormula(t *testing.T) {
+	// --stdin and --formula are mutually exclusive.
+	var stderr bytes.Buffer
+	cmd := newSlingCmd(&bytes.Buffer{}, &stderr)
+	cmd.SetArgs([]string{"mayor", "--stdin", "--formula"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --stdin with --formula")
+	}
+}
+
+func TestSlingStdinWithExtraArg(t *testing.T) {
+	// --stdin with 2 positional args (target + text) should error.
+	var stderr bytes.Buffer
+	cmd := newSlingCmd(&bytes.Buffer{}, &stderr)
+	cmd.SetArgs([]string{"mayor", "extra-arg", "--stdin"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --stdin with extra positional arg")
+	}
+	if !strings.Contains(stderr.String(), "--stdin requires exactly 1 argument") {
+		t.Errorf("stderr = %q, want to contain '--stdin requires exactly 1 argument'", stderr.String())
 	}
 }

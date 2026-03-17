@@ -181,7 +181,7 @@ become role-agnostic infrastructure that any pack can use.
 | Sling idempotency | `checkBeadState` pre-flight | **PARTIAL** | Warns on already-assigned/labeled beads; `--force` suppresses. Warns rather than skips. |
 | Sling --args (natural language) | — | **TODO** | Store instructions on bead, show via gc prime |
 | Sling --merge strategy | `gc sling --merge` | **DONE** | `--merge direct\|mr\|local` stores `merge_strategy` metadata on bead |
-| Sling --stdin | — | **TODO** | Pipe stdin content as bead body (gastown: `echo "..." \| gt sling --stdin target`) |
+| Sling --stdin | `gc sling --stdin` | **DONE** | `--stdin` reads text from stdin (first line = title, rest = description); mutually exclusive with `--formula` |
 | Sling --max-concurrent | — | **N/A** | WONTFIX: pool min/max config controls concurrency; agents pull work via `bd ready` so overload is self-limiting. |
 | Sling auto-convoy | `gc sling` (default) | **DONE** | Auto-creates convoy on sling; `--no-convoy` to suppress, `--owned` to mark owned |
 | Sling --account | — | **TODO** | Per-sling account override for quota rotation. Resolves handle → `CLAUDE_CONFIG_DIR` for spawned agent. Requires `gc account` + `gc quota` command groups. |
@@ -380,7 +380,7 @@ become role-agnostic infrastructure that any pack can use.
 | `gt order run` | `gc order run` | **DONE** | Executes order manually: instantiates wisp, slings to target pool |
 | `gt order check` | `gc order check` | **DONE** | Evaluates gates for all orders, shows due/not-due table |
 | `gt order history` | `gc order history` | **DONE** | Show order execution history; queries order-run: labels |
-| Order gate types | `internal/orders` | **DONE** | 4 of 5 types: cooldown, cron, condition, manual. Missing: event (trigger on specific bead events). |
+| Order gate types | `internal/orders` | **DONE** | 5 of 5 types: cooldown, cron, condition, manual, event. |
 | Order TOML format | `orders/<name>/order.toml` | **DONE** | `[order]` header with gate, formula, interval, schedule, check, pool, enabled fields |
 | Order tracking (labels, digest) | `order-run:` labels | **DONE** | Execution recording via bead labels, last-run tracking for gate evaluation |
 | Order execution timeout | — | **TODO** | Timeout enforcement |
@@ -608,11 +608,11 @@ These are features that gastown's configuration depends on to function:
 | 6 | Convoy land/launch/stage | 10 | P2 |
 | 7 | Sling --args | 7 | P2 |
 | 11 | PreToolUse/PostToolUse hooks | 14 | P2 |
-| 12 | Order event gate type | 15 | P2 |
+| ~~12~~ | ~~Order event gate type~~ | ~~15~~ | **DONE** |
 | ~~13~~ | ~~Order tracking (last-run)~~ | ~~15~~ | ~~P1 DONE~~ |
 | 14 | Message templates | 18 | P2 |
 | 15 | CLAUDE.md generation | 18 | P2 |
-| 19 | Sling --stdin | 7 | P3 |
+| ~~19~~ | ~~Sling --stdin~~ | ~~7~~ | **DONE** |
 | 20 | Sling --account | 7 | P3 |
 | 21 | Hooks sync/diff/base/override/list/scan/init | 14 | P3 |
 | 22 | Roundtrip-safe settings editing | 14 | P3 |
@@ -645,7 +645,7 @@ These are features that gastown's configuration depends on to function:
 - Wasteland federation (cross-town)
 - Shell integration (deployment)
 - Agent presets (config handles this)
-- Name pools (numeric naming is sufficient)
+- ~~Name pools~~ **DONE** (namepool feature)
 
 ---
 
@@ -655,9 +655,9 @@ These are features that gastown's configuration depends on to function:
 |----------|-----------|-----------------|-------|
 | P0 | 0 remaining | — | All P0 items resolved (DONE, REMAP, or N/A) |
 | P1 | 0 remaining | — | All P1 items resolved |
-| P2 | 7 items (#6-15) | ~1,400-2,500 | Sling flags, convoy features, hooks, orders, templates |
-| P3 | 24 items (#19-42) | ~3,500-5,000 | Hook lifecycle, order polish, dolt CLI, formula resolution, rig ops, accounts, dashboard |
-| **Total** | **31 TODO items** | **~4,900-7,500** | All P0+P1 cleared; 4 P2 resolved, 2 P2 WONTFIX, 1 P2 REMAP (MR bead fields = just bd metadata) |
+| P2 | 6 items (#6-15) | ~1,200-2,300 | Sling flags, convoy features, hooks, templates |
+| P3 | 23 items (#20-42) | ~3,400-4,900 | Hook lifecycle, order polish, dolt CLI, formula resolution, rig ops, accounts, dashboard |
+| **Total** | **29 TODO items** | **~4,600-7,200** | All P0+P1 cleared; 5 P2 resolved, 2 P2 WONTFIX, 1 P2 REMAP (MR bead fields = just bd metadata) |
 
 Current Gas City: ~14,000 lines of Go (excl. tests, docs, generated).
 Feature parity target: ~20,000-23,000 lines.

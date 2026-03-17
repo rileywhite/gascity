@@ -20,6 +20,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// slingStdin returns the reader for --stdin input. Extracted for testability.
+var slingStdin = func() io.Reader { return os.Stdin }
+
 // BeadQuerier can retrieve a single bead by ID.
 type BeadQuerier interface {
 	Get(id string) (beads.Bead, error)
@@ -44,6 +47,7 @@ func newSlingCmd(stdout, stderr io.Writer) *cobra.Command {
 	var onFormula string
 	var dryRun bool
 	var noFormula bool
+	var fromStdin bool
 	cmd := &cobra.Command{
 		Use:   "sling [target] <bead-or-formula-or-text>",
 		Short: "Route work to an agent or pool",
@@ -63,10 +67,16 @@ and its root bead is routed to the target.
 Examples:
   gc sling my-rig/claude BL-42              # route existing bead
   gc sling my-rig/claude "write a README"   # create bead from text, then route
-  gc sling mayor code-review --formula      # instantiate formula, route wisp`,
+  gc sling mayor code-review --formula      # instantiate formula, route wisp
+  echo "fix login" | gc sling mayor --stdin # read bead text from stdin`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
-			if len(args) < 1 || len(args) > 2 {
+			if fromStdin {
+				if len(args) != 1 {
+					fmt.Fprintf(stderr, "gc sling: --stdin requires exactly 1 argument (target)\n") //nolint:errcheck // best-effort stderr
+					return errExit
+				}
+			} else if len(args) < 1 || len(args) > 2 {
 				fmt.Fprintf(stderr, "gc sling: requires 1 or 2 arguments: [target] <bead-or-formula>\n") //nolint:errcheck // best-effort stderr
 				return errExit
 			}
@@ -78,7 +88,7 @@ Examples:
 				fmt.Fprintf(stderr, "gc sling: --merge must be direct, mr, or local\n") //nolint:errcheck // best-effort stderr
 				return errExit
 			}
-			code := cmdSling(args, formula, nudge, force, title, vars, merge, noConvoy, owned, onFormula, noFormula, dryRun, stdout, stderr)
+			code := cmdSling(args, formula, nudge, force, title, vars, merge, noConvoy, owned, onFormula, noFormula, fromStdin, dryRun, stdout, stderr)
 			if code != 0 {
 				return errExit
 			}
@@ -96,9 +106,11 @@ Examples:
 	cmd.Flags().StringVar(&onFormula, "on", "", "attach wisp from formula to bead before routing")
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show what would be done without executing")
 	cmd.Flags().BoolVar(&noFormula, "no-formula", false, "suppress default formula (route raw bead)")
+	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read bead text from stdin (first line = title, rest = description)")
 	cmd.MarkFlagsMutuallyExclusive("formula", "on")
 	cmd.MarkFlagsMutuallyExclusive("no-formula", "formula")
 	cmd.MarkFlagsMutuallyExclusive("no-formula", "on")
+	cmd.MarkFlagsMutuallyExclusive("stdin", "formula")
 	return cmd
 }
 
@@ -161,7 +173,29 @@ func shellSlingRunner(dir, command string, env map[string]string) (string, error
 }
 
 // cmdSling is the CLI entry point for gc sling.
-func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars []string, merge string, noConvoy, owned bool, onFormula string, noFormula, dryRun bool, stdout, stderr io.Writer) int {
+func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars []string, merge string, noConvoy, owned bool, onFormula string, noFormula, fromStdin, dryRun bool, stdout, stderr io.Writer) int {
+	// --stdin: read bead text from stdin early (before city resolution)
+	// so errors are reported immediately. First line = title, rest = description.
+	var stdinDescription string
+	var stdinTitle string
+	if fromStdin {
+		data, err := io.ReadAll(slingStdin())
+		if err != nil {
+			fmt.Fprintf(stderr, "gc sling: reading stdin: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		content := strings.TrimRight(string(data), "\n")
+		if content == "" {
+			fmt.Fprintf(stderr, "gc sling: --stdin: no input received\n") //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		lines := strings.SplitN(content, "\n", 2)
+		stdinTitle = lines[0]
+		if len(lines) > 1 {
+			stdinDescription = strings.TrimSpace(lines[1])
+		}
+	}
+
 	cityPath, err := resolveCity()
 	if err != nil {
 		fmt.Fprintf(stderr, "gc sling: %v\n", err) //nolint:errcheck // best-effort stderr
@@ -178,7 +212,10 @@ func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars 
 	}
 
 	var target, beadOrFormula string
-	if len(args) == 2 {
+	if fromStdin {
+		target = args[0]
+		beadOrFormula = stdinTitle
+	} else if len(args) == 2 {
 		target = args[0]
 		beadOrFormula = args[1]
 	} else {
@@ -234,7 +271,7 @@ func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars 
 	// (and we're not in formula mode), create a task bead from the text.
 	// Skip during dry-run to avoid side effects.
 	if !isFormula && !dryRun && !looksLikeBeadID(beadOrFormula) {
-		created, err := store.Create(beads.Bead{Title: beadOrFormula, Type: "task"})
+		created, err := store.Create(beads.Bead{Title: beadOrFormula, Description: stdinDescription, Type: "task"})
 		if err != nil {
 			fmt.Fprintf(stderr, "gc sling: creating bead: %v\n", err) //nolint:errcheck // best-effort stderr
 			return 1
