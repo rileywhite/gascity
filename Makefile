@@ -20,7 +20,7 @@ LDFLAGS := -X main.version=$(VERSION) \
            -X main.commit=$(COMMIT) \
            -X main.date=$(BUILD_TIME)
 
-.PHONY: build check check-all check-bd check-docker check-docs check-dolt lint fmt-check fmt vet test test-integration test-mcp-mail test-docker test-k8s test-cover cover install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev
+.PHONY: build check check-all check-bd check-docker check-docs check-dolt lint fmt-check fmt vet test test-acceptance test-integration test-mcp-mail test-docker test-k8s test-cover cover install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev
 
 ## build: compile gc binary with version metadata
 build:
@@ -97,6 +97,10 @@ vet:
 ## test: run unit tests (skip integration tests tagged with //go:build integration)
 test:
 	go test ./...
+
+## test-acceptance: run acceptance tests (Tier A — subprocess, no tmux, <5 min)
+test-acceptance:
+	go test -tags acceptance_a -timeout 5m ./test/acceptance/...
 
 ## test-integration: run all tests including integration (tmux, etc.)
 test-integration:

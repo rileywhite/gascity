@@ -91,6 +91,9 @@ jobs:
       - name: Docs
         run: make check-docs
 
+      - name: Acceptance tests (Tier A)
+        run: make test-acceptance
+
       - name: Integration tests
         run: make test-integration
 
