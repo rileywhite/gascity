@@ -720,15 +720,18 @@ func reconcileCities(
 			}()
 		}
 
-		// Materialize gastown packs before config load if needed (same as doStart).
-		if cityUsesBuiltInGastownPackFS(fsys.OSFS{}, path) {
+		// Quick-parse city.toml for pre-load tasks (same as doStart).
+		quickCfg, qErr := config.Load(fsys.OSFS{}, tomlPath)
+
+		// Materialize gastown packs before full config load if needed.
+		if qErr == nil && usesGastownPack(quickCfg) {
 			if err := MaterializeGastownPacks(path); err != nil {
 				fmt.Fprintf(stderr, "gc supervisor: city '%s': materializing gastown packs: %v\n", name, err) //nolint:errcheck
 			}
 		}
 
 		// Auto-fetch remote packs before full config load (same as doStart).
-		if quickCfg, qErr := config.Load(fsys.OSFS{}, tomlPath); qErr == nil && len(quickCfg.Packs) > 0 {
+		if qErr == nil && len(quickCfg.Packs) > 0 {
 			if fErr := config.FetchPacks(quickCfg.Packs, path); fErr != nil {
 				recordInitFailure(name, fmt.Sprintf("fetching packs: %v", fErr))
 				continue

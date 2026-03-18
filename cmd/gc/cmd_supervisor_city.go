@@ -137,6 +137,14 @@ func registerCityWithSupervisor(cityPath string, stdout, stderr io.Writer, comma
 		return 1
 	}
 
+	// Test hook: intercept before writing to the real registry so tests
+	// don't pollute the production cities.toml.
+	if registerCityWithSupervisorTestHook != nil {
+		if handled, code := registerCityWithSupervisorTestHook(cityPath, commandName, stdout, stderr); handled {
+			return code
+		}
+	}
+
 	reg := supervisor.NewRegistry(supervisor.RegistryPath())
 	if err := reg.Register(cityPath, name); err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err) //nolint:errcheck // best-effort stderr
@@ -150,12 +158,6 @@ func registerCityWithSupervisor(cityPath string, stdout, stderr io.Writer, comma
 	}
 
 	fmt.Fprintf(stdout, "Registered city '%s' (%s)\n", entry.EffectiveName(), entry.Path) //nolint:errcheck // best-effort stdout
-
-	if registerCityWithSupervisorTestHook != nil {
-		if handled, code := registerCityWithSupervisorTestHook(cityPath, commandName, stdout, stderr); handled {
-			return code
-		}
-	}
 
 	if ensureSupervisorRunningHook(stdout, stderr) != 0 {
 		rollbackRegisteredCity(reg, entry, stderr, commandName, "supervisor did not start", false)

@@ -307,17 +307,20 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "gc start: runtime scaffold: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	// Materialize gastown packs before config load if the city references them.
-	// This covers the case where gc init wrote city.toml but failed before
-	// MaterializeGastownPacks ran (e.g., provider readiness failure).
-	if cityUsesBuiltInGastownPackFS(fsys.OSFS{}, cityPath) {
+	// Quick-parse city.toml (without includes) for pre-load tasks.
+	quickCfg, qErr := config.Load(fsys.OSFS{}, filepath.Join(cityPath, "city.toml"))
+
+	// Materialize gastown packs before full config load if the city
+	// references them. Covers the case where gc init wrote city.toml
+	// but failed before MaterializeGastownPacks ran.
+	if qErr == nil && usesGastownPack(quickCfg) {
 		if err := MaterializeGastownPacks(cityPath); err != nil {
 			fmt.Fprintf(stderr, "gc start: materializing gastown packs: %v\n", err) //nolint:errcheck // best-effort stderr
 		}
 	}
 
 	// Auto-fetch remote packs before full config load.
-	if quickCfg, qErr := config.Load(fsys.OSFS{}, filepath.Join(cityPath, "city.toml")); qErr == nil && len(quickCfg.Packs) > 0 {
+	if qErr == nil && len(quickCfg.Packs) > 0 {
 		if fErr := config.FetchPacks(quickCfg.Packs, cityPath); fErr != nil {
 			fmt.Fprintf(stderr, "gc start: fetching packs: %v\n", fErr) //nolint:errcheck // best-effort stderr
 			return 1
@@ -381,7 +384,6 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	if err := materializeBuiltinFormulas(cityPath); err != nil {
 		fmt.Fprintf(stderr, "gc start: builtin formulas: %v\n", err) //nolint:errcheck // best-effort stderr
 	}
-	ensureInitArtifacts(cityPath, cfg, stderr, "gc start")
 	ensureInitArtifacts(cityPath, cfg, stderr, "gc start")
 
 	// Resolve rig paths and run the full bead store lifecycle:
