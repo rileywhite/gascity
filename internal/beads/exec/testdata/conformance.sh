@@ -50,6 +50,8 @@ case "$op" in
     id=$(next_id)
     title=$(echo "$input" | jq -r '.title // ""')
     bead_type=$(echo "$input" | jq -r '.type // "task"')
+    assignee=$(echo "$input" | jq -r '.assignee // ""')
+    from=$(echo "$input" | jq -r '.from // ""')
     parent_id=$(echo "$input" | jq -r '.parent_id // ""')
     ref=$(echo "$input" | jq -r '.ref // ""')
     description=$(echo "$input" | jq -r '.description // ""')
@@ -67,7 +69,8 @@ case "$op" in
       --arg status "open" \
       --arg bead_type "$bead_type" \
       --arg created_at "$created_at" \
-      --arg assignee "" \
+      --arg assignee "$assignee" \
+      --arg from "$from" \
       --arg parent_id "$parent_id" \
       --arg ref "$ref" \
       --argjson needs "$needs" \
@@ -80,6 +83,7 @@ case "$op" in
         type: $bead_type,
         created_at: $created_at,
         assignee: $assignee,
+        from: $from,
         parent_id: $parent_id,
         ref: $ref,
         needs: $needs,
@@ -123,6 +127,13 @@ case "$op" in
     if [ "$has_pid" = "true" ]; then
       new_pid=$(echo "$input" | jq -r '.parent_id')
       current=$(echo "$current" | jq --arg p "$new_pid" '.parent_id = $p')
+    fi
+
+    # Apply assignee if present (non-null).
+    has_assignee=$(echo "$input" | jq 'has("assignee") and .assignee != null')
+    if [ "$has_assignee" = "true" ]; then
+      new_assignee=$(echo "$input" | jq -r '.assignee')
+      current=$(echo "$current" | jq --arg a "$new_assignee" '.assignee = $a')
     fi
 
     # Append labels if present.

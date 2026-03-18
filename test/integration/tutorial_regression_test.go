@@ -29,20 +29,7 @@ import (
 //   - Default formula (mol-do-work) instantiation
 //   - Agent session lifecycle (start → claim → execute → close)
 func TestTutorialRegression(t *testing.T) {
-	if usingSubprocess() {
-		t.Skip("tutorial regression requires tmux")
-	}
-
-	guard := tmuxtest.NewGuard(t)
-	cityName := guard.CityName()
-	cityDir := filepath.Join(t.TempDir(), cityName)
-
-	// ── Phase 1: gc init ────────────────────────────────────────────
-	out, err := gcReal("", "init", "--provider", "claude", "--skip-provider-readiness", cityDir)
-	if err != nil {
-		t.Fatalf("gc init failed: %v\n%s", err, out)
-	}
-	t.Logf("gc init:\n%s", out)
+	cityDir, rigDir := setupTutorialCity(t)
 
 	// Verify city.toml content.
 	toml := readFile(t, filepath.Join(cityDir, "city.toml"))
@@ -51,42 +38,10 @@ func TestTutorialRegression(t *testing.T) {
 	if strings.Contains(toml, "[api]") {
 		t.Errorf("city.toml has spurious [api] section (regression)")
 	}
-
-	// ── Phase 2: gc start ───────────────────────────────────────────
-	out, err = gcReal("", "start", cityDir)
-	if err != nil {
-		t.Fatalf("gc start failed: %v\n%s", err, out)
-	}
-	t.Logf("gc start:\n%s", out)
-	t.Cleanup(func() { gcReal("", "stop", cityDir) }) //nolint:errcheck
-
-	// Give supervisor a moment to reconcile.
-	time.Sleep(2 * time.Second)
-
-	// ── Phase 3: gc rig add ─────────────────────────────────────────
-	rigDir := filepath.Join(cityDir, "rigs", "hello-world")
-	if err := os.MkdirAll(rigDir, 0o755); err != nil {
-		t.Fatalf("creating rig dir: %v", err)
-	}
-
-	out, err = gcReal(cityDir, "rig", "add", "rigs/hello-world")
-	if err != nil {
-		t.Fatalf("gc rig add failed: %v\n%s", err, out)
-	}
-	t.Logf("gc rig add:\n%s", out)
-
-	// Regression: set -e bug prevented .beads/ creation.
-	beadsDir := filepath.Join(rigDir, ".beads")
-	if _, serr := os.Stat(beadsDir); os.IsNotExist(serr) {
-		t.Fatalf("rig .beads/ not created — gc rig add failed to initialize beads (set -e regression)")
-	}
-
-	// Verify city.toml updated with rig.
-	toml = readFile(t, filepath.Join(cityDir, "city.toml"))
 	assertContains(t, toml, "hello-world", "city.toml missing rig after gc rig add")
 
 	// ── Phase 4: bd create from inside rig ──────────────────────────
-	out, err = bdReal(rigDir, "create", "Write hello world in the language of your choice")
+	out, err := bdReal(rigDir, "create", "Write hello world in the language of your choice")
 	if err != nil {
 		t.Fatalf("bd create failed: %v\n%s", err, out)
 	}
@@ -111,49 +66,54 @@ func TestTutorialRegression(t *testing.T) {
 	assertContains(t, out, "Slung", "gc sling output missing confirmation")
 
 	// ── Phase 6: wait for bead to close ─────────────────────────────
-	deadline := time.Now().Add(5 * time.Minute)
-	var lastStatus string
-	for time.Now().Before(deadline) {
-		out, err = bdReal(rigDir, "show", beadID)
-		if err != nil {
-			t.Logf("bd show error (retrying): %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+	waitForBeadClose(t, rigDir, beadID, 5*time.Minute)
 
-		lower := strings.ToLower(out)
-		if strings.Contains(lower, "closed") {
-			t.Logf("bead %s closed", beadID)
-			goto closed
-		}
-
-		status := parseStatus(lower)
-		if status != lastStatus {
-			t.Logf("bead %s: %s", beadID, status)
-			lastStatus = status
-		}
-		time.Sleep(10 * time.Second)
-	}
-	t.Fatalf("bead %s did not close within 5 minutes:\n%s", beadID, out)
-
-closed:
 	// ── Phase 7: verify agent output ────────────────────────────────
-	entries, err := os.ReadDir(rigDir)
-	if err != nil {
-		t.Fatalf("reading rig dir: %v", err)
-	}
-	var produced []string
-	for _, e := range entries {
-		switch e.Name() {
-		case ".beads", ".gitignore", ".git":
-			continue
-		}
-		produced = append(produced, e.Name())
-	}
+	produced := listUserFiles(t, rigDir)
 	if len(produced) == 0 {
 		t.Errorf("agent closed bead but produced no files in rig dir")
 	} else {
 		t.Logf("agent produced: %v", produced)
+	}
+
+	// ── Phase 8: inline text sling ──────────────────────────────────
+	// Tutorial: `gc sling claude "Write hello-world.cpp"`
+	// Auto-creates a bead from the text and slings it in one command.
+	out, err = gcReal(rigDir, "sling", "claude", "Write hello-world.cpp")
+	if err != nil {
+		t.Fatalf("gc sling inline text failed: %v\n%s", err, out)
+	}
+	t.Logf("gc sling inline:\n%s", out)
+	assertContains(t, out, "Slung", "inline sling output missing confirmation")
+
+	// Extract the auto-created bead ID.
+	inlineBeadID := extractSlingBeadID(t, out)
+	t.Logf("inline bead ID: %s", inlineBeadID)
+
+	if !strings.HasPrefix(inlineBeadID, "hw-") {
+		t.Errorf("inline bead ID %q has wrong prefix — expected hw-", inlineBeadID)
+	}
+
+	// Wait for the inline bead to close.
+	waitForBeadClose(t, rigDir, inlineBeadID, 5*time.Minute)
+
+	// Verify hello-world.cpp was created.
+	cppPath := filepath.Join(rigDir, "hello-world.cpp")
+	if _, serr := os.Stat(cppPath); os.IsNotExist(serr) {
+		allFiles := listUserFiles(t, rigDir)
+		var cppFiles []string
+		for _, f := range allFiles {
+			if strings.HasSuffix(f, ".cpp") {
+				cppFiles = append(cppFiles, f)
+			}
+		}
+		if len(cppFiles) == 0 {
+			t.Errorf("agent did not produce any .cpp file; files: %v", allFiles)
+		} else {
+			t.Logf("agent produced .cpp files: %v (expected hello-world.cpp)", cppFiles)
+		}
+	} else {
+		t.Logf("hello-world.cpp created successfully")
 	}
 }
 
@@ -191,6 +151,227 @@ func bdReal(dir string, args ...string) (string, error) {
 	cmd.Env = acceptanceEnv()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// setupTutorialCity creates an initialized city with a hello-world rig,
+// ready for sling operations. Shared preamble for tutorial tests.
+func setupTutorialCity(t *testing.T) (cityDir, rigDir string) {
+	t.Helper()
+
+	if usingSubprocess() {
+		t.Skip("tutorial tests require tmux")
+	}
+
+	guard := tmuxtest.NewGuard(t)
+	cityName := guard.CityName()
+	cityDir = filepath.Join(t.TempDir(), cityName)
+
+	// gc init
+	out, err := gcReal("", "init", "--provider", "claude", "--skip-provider-readiness", cityDir)
+	if err != nil {
+		t.Fatalf("gc init failed: %v\n%s", err, out)
+	}
+
+	// gc start
+	out, err = gcReal("", "start", cityDir)
+	if err != nil {
+		t.Fatalf("gc start failed: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { gcReal("", "stop", cityDir) }) //nolint:errcheck
+
+	time.Sleep(2 * time.Second)
+
+	// gc rig add
+	rigDir = filepath.Join(cityDir, "rigs", "hello-world")
+	if err := os.MkdirAll(rigDir, 0o755); err != nil {
+		t.Fatalf("creating rig dir: %v", err)
+	}
+	out, err = gcReal(cityDir, "rig", "add", "rigs/hello-world")
+	if err != nil {
+		t.Fatalf("gc rig add failed: %v\n%s", err, out)
+	}
+
+	// Verify .beads/ created
+	if _, serr := os.Stat(filepath.Join(rigDir, ".beads")); os.IsNotExist(serr) {
+		t.Fatalf("rig .beads/ not created")
+	}
+
+	return cityDir, rigDir
+}
+
+// TestTutorialConvoy exercises the convoy sling flow from tutorial Part 3:
+//
+//	Step 1: bd create (3 tasks)
+//	Step 2: gc convoy create (group them)
+//	Step 3: gc sling convoy (fan-out to all children)
+//	Step 4: wait for all children to close
+//	Result: one file per language in the rig directory
+func TestTutorialConvoy(t *testing.T) {
+	_, rigDir := setupTutorialCity(t)
+
+	// ── Step 1: Create Three Beads ──────────────────────────────────
+	prompts := []struct {
+		text string
+		ext  string // expected file extension
+	}{
+		{"Hello world in Python", ".py"},
+		{"Hello world in Rust", ".rs"},
+		{"Hello world in Haskell", ".hs"},
+	}
+
+	var childIDs []string
+	for _, p := range prompts {
+		out, err := bdReal(rigDir, "create", p.text)
+		if err != nil {
+			t.Fatalf("bd create %q failed: %v\n%s", p.text, err, out)
+		}
+		id := extractBeadID(t, out)
+		childIDs = append(childIDs, id)
+		t.Logf("created: %s — %s", id, p.text)
+	}
+
+	// All beads should have rig prefix.
+	for _, id := range childIDs {
+		if !strings.HasPrefix(id, "hw-") {
+			t.Fatalf("bead %q has wrong prefix — expected hw-", id)
+		}
+	}
+
+	// ── Step 2: Group Them in a Convoy ──────────────────────────────
+	convoyArgs := append([]string{"convoy", "create", "Hello World Variants"}, childIDs...)
+	out, err := gcReal(rigDir, convoyArgs...)
+	if err != nil {
+		t.Fatalf("gc convoy create failed: %v\n%s", err, out)
+	}
+	t.Logf("gc convoy create:\n%s", out)
+	assertContains(t, out, "convoy", "convoy create output missing confirmation")
+
+	// Extract convoy ID.
+	convoyID := extractConvoyID(t, out)
+	t.Logf("convoy: %s tracking %d children", convoyID, len(childIDs))
+
+	// ── Step 3: Sling the Convoy ────────────────────────────────────
+	out, err = gcReal(rigDir, "sling", "claude", convoyID)
+	if err != nil {
+		t.Fatalf("gc sling convoy failed: %v\n%s", err, out)
+	}
+	t.Logf("gc sling convoy:\n%s", out)
+	assertContains(t, out, "Slung", "convoy sling missing confirmation")
+
+	// ── Step 4: Wait for All Children to Close ──────────────────────
+	for _, id := range childIDs {
+		waitForBeadClose(t, rigDir, id, 5*time.Minute)
+	}
+
+	// ── Result: Three Files ─────────────────────────────────────────
+	allFiles := listUserFiles(t, rigDir)
+	t.Logf("files after convoy: %v", allFiles)
+
+	for _, p := range prompts {
+		found := false
+		for _, f := range allFiles {
+			if strings.HasSuffix(f, p.ext) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no %s file produced for %q; files: %v", p.ext, p.text, allFiles)
+		}
+	}
+}
+
+// waitForBeadClose polls bd show until the bead is closed or timeout.
+func waitForBeadClose(t *testing.T, dir, beadID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastStatus, out string
+	var err error
+	for time.Now().Before(deadline) {
+		out, err = bdReal(dir, "show", beadID)
+		if err != nil {
+			t.Logf("bd show error (retrying): %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		lower := strings.ToLower(out)
+		if strings.Contains(lower, "closed") {
+			t.Logf("bead %s closed", beadID)
+			return
+		}
+		status := parseStatus(lower)
+		if status != lastStatus {
+			t.Logf("bead %s: %s", beadID, status)
+			lastStatus = status
+		}
+		time.Sleep(10 * time.Second)
+	}
+	t.Fatalf("bead %s did not close within %s:\n%s", beadID, timeout, out)
+}
+
+// listUserFiles returns non-infrastructure file names in a directory.
+func listUserFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	var files []string
+	for _, e := range entries {
+		switch e.Name() {
+		case ".beads", ".gitignore", ".git", ".gc", ".runtime":
+			continue
+		}
+		files = append(files, e.Name())
+	}
+	return files
+}
+
+// extractSlingBeadID extracts the bead ID from gc sling output.
+func extractSlingBeadID(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Slung") {
+			fields := strings.Fields(line)
+			for i, f := range fields {
+				if f == "Slung" && i+1 < len(fields) {
+					return fields[i+1]
+				}
+			}
+		}
+		if strings.Contains(line, "Created") {
+			fields := strings.Fields(line)
+			for i, f := range fields {
+				if f == "Created" && i+1 < len(fields) {
+					return strings.TrimRight(fields[i+1], " —")
+				}
+			}
+		}
+	}
+	t.Fatalf("could not extract bead ID from sling output:\n%s", output)
+	return ""
+}
+
+// extractConvoyID extracts the convoy bead ID from gc convoy create output.
+// Looks for "Created convoy <id>" or "convoy <id>".
+func extractConvoyID(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "convoy") {
+			fields := strings.Fields(line)
+			for i, f := range fields {
+				if strings.ToLower(f) == "convoy" && i+1 < len(fields) {
+					candidate := strings.TrimRight(fields[i+1], " —\"")
+					if strings.Contains(candidate, "-") {
+						return candidate
+					}
+				}
+			}
+		}
+	}
+	t.Fatalf("could not extract convoy ID from output:\n%s", output)
+	return ""
 }
 
 // readFile reads a file and returns its content as a string.

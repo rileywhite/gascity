@@ -229,6 +229,37 @@ esac
 	}
 }
 
+func TestUpdate_assigneeRoundTripsThroughConformanceScript(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+	scriptPath, err := filepath.Abs(filepath.Join("testdata", "conformance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewStore(scriptPath)
+	s.SetEnv(map[string]string{"BEADS_DIR": t.TempDir()})
+
+	created, err := s.Create(beads.Bead{Title: "reassignable"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	assignee := "mayor"
+	if err := s.Update(created.ID, beads.UpdateOpts{Assignee: &assignee}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := s.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Assignee != assignee {
+		t.Errorf("Assignee = %q after Update, want %q", got.Assignee, assignee)
+	}
+}
+
 func TestClose(t *testing.T) {
 	dir := t.TempDir()
 	script := writeScript(t, dir, allOpsScript())

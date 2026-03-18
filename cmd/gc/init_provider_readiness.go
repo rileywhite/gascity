@@ -451,6 +451,10 @@ func checkHardDependencies(cityPath string) []missingDep {
 			installHint: "https://github.com/tmux/tmux/wiki/Installing",
 		},
 		{
+			name:        "jq",
+			installHint: "brew install jq (macOS) or apt install jq (Linux)",
+		},
+		{
 			name:        "git",
 			installHint: "https://git-scm.com/downloads",
 		},

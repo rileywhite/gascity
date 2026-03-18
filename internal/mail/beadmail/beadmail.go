@@ -176,13 +176,13 @@ func (p *Provider) Thread(threadID string) ([]mail.Message, error) {
 
 // Count returns (total, unread) message counts for a recipient.
 func (p *Provider) Count(recipient string) (int, int, error) {
-	all, err := p.store.List()
+	all, err := p.listMessages()
 	if err != nil {
 		return 0, 0, fmt.Errorf("beadmail count: %w", err)
 	}
 	var total, unread int
 	for _, b := range all {
-		if isMessage(b) && b.Status == "open" && (recipient == "" || b.Assignee == recipient) {
+		if b.Status == "open" && (recipient == "" || b.Assignee == recipient) {
 			total++
 			if !hasLabel(b.Labels, "read") {
 				unread++
@@ -195,13 +195,13 @@ func (p *Provider) Count(recipient string) (int, int, error) {
 // filterMessages returns open message beads assigned to the recipient.
 // When includeRead is false, messages with the "read" label are excluded.
 func (p *Provider) filterMessages(recipient string, includeRead bool) ([]mail.Message, error) {
-	all, err := p.store.List()
+	all, err := p.listMessages()
 	if err != nil {
 		return nil, fmt.Errorf("beadmail: listing beads: %w", err)
 	}
 	var msgs []mail.Message
 	for _, b := range all {
-		if isMessage(b) && b.Status == "open" && (recipient == "" || b.Assignee == recipient) {
+		if b.Status == "open" && (recipient == "" || b.Assignee == recipient) {
 			if !includeRead && hasLabel(b.Labels, "read") {
 				continue
 			}
@@ -209,6 +209,42 @@ func (p *Provider) filterMessages(recipient string, includeRead bool) ([]mail.Me
 		}
 	}
 	return msgs, nil
+}
+
+// listMessages returns message beads by combining the store's generic list with
+// an explicit gc:message label query. Some external stores can retrieve message
+// beads by ID and label query but omit them from the generic list output.
+func (p *Provider) listMessages() ([]beads.Bead, error) {
+	all, err := p.store.List()
+	if err != nil {
+		return nil, fmt.Errorf("listing beads: %w", err)
+	}
+	labeled, err := p.store.ListByLabel("gc:message", 0)
+	if err != nil {
+		return nil, fmt.Errorf("listing gc:message beads: %w", err)
+	}
+
+	seen := make(map[string]beads.Bead, len(all)+len(labeled))
+	order := make([]string, 0, len(all)+len(labeled))
+	add := func(bs []beads.Bead) {
+		for _, b := range bs {
+			if !isMessage(b) {
+				continue
+			}
+			if _, ok := seen[b.ID]; !ok {
+				order = append(order, b.ID)
+			}
+			seen[b.ID] = b
+		}
+	}
+	add(all)
+	add(labeled)
+
+	result := make([]beads.Bead, 0, len(order))
+	for _, id := range order {
+		result = append(result, seen[id])
+	}
+	return result, nil
 }
 
 // isMessage returns true if the bead is a message (by Type or gc:message label).
