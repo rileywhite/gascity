@@ -876,20 +876,21 @@ func reconcileCities(
 		mc := &managedCity{name: cityName, cancel: cityCancel, done: done, closer: fr}
 
 		cityRuntime := newCityRuntime(CityRuntimeParams{
-			CityPath:          path,
-			CityName:          cityName,
-			TomlPath:          tomlPath,
-			WatchDirs:         watchDirs,
-			ConfigRev:         configRev,
-			Cfg:               cfg,
-			SP:                sp,
-			Publication:       publication,
-			BuildFn:           supervisorBuildAgentsFn(path, cityName, stderr),
-			Dops:              dops,
-			Rec:               rec,
-			PoolSessions:      poolSessions,
-			PoolDeathHandlers: poolDeathHandlers,
-			PokeCh:            pokeCh,
+			CityPath:                path,
+			CityName:                cityName,
+			TomlPath:                tomlPath,
+			WatchDirs:               watchDirs,
+			ConfigRev:               configRev,
+			Cfg:                     cfg,
+			SP:                      sp,
+			Publication:             publication,
+			BuildFn:                 supervisorBuildAgentsFn(path, cityName, stderr),
+			BuildFnWithSessionBeads: supervisorBuildAgentsFnWithSessionBeads(path, cityName, stderr),
+			Dops:                    dops,
+			Rec:                     rec,
+			PoolSessions:            poolSessions,
+			PoolDeathHandlers:       poolDeathHandlers,
+			PokeCh:                  pokeCh,
 			OnStarted: func() {
 				cr.UpdateCallback(path, func(m *managedCity) {
 					m.started = true
@@ -1154,6 +1155,13 @@ func supervisorBuildAgentsFn(cityPath, cityName string, stderr io.Writer) func(*
 	beaconTime := time.Now()
 	return func(c *config.City, sp runtime.Provider, store beads.Store) map[string]TemplateParams {
 		return buildDesiredState(cityName, cityPath, beaconTime, c, sp, store, stderr)
+	}
+}
+
+func supervisorBuildAgentsFnWithSessionBeads(cityPath, cityName string, stderr io.Writer) func(*config.City, runtime.Provider, beads.Store, *sessionBeadSnapshot) map[string]TemplateParams {
+	beaconTime := time.Now()
+	return func(c *config.City, sp runtime.Provider, store beads.Store, sessionBeads *sessionBeadSnapshot) map[string]TemplateParams {
+		return buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, c, sp, store, sessionBeads, stderr)
 	}
 }
 

@@ -30,6 +30,13 @@ func (p *agentBuildParams) resolveSessionName(qualifiedName, _ /* templateName *
 	}
 
 	// Try bead store lookup if available.
+	if p.sessionBeads != nil {
+		sn := p.sessionBeads.FindSessionNameByTemplate(qualifiedName)
+		if sn != "" {
+			p.beadNames[qualifiedName] = sn
+			return sn
+		}
+	}
 	if p.beadStore != nil {
 		sn := findSessionNameByTemplate(p.beadStore, qualifiedName)
 		if sn != "" {
@@ -89,39 +96,11 @@ func normalizedSessionTemplate(bead beads.Bead, cfg *config.City) string {
 // beads with an agent_name field matching the query. If no agent_name match
 // is found, falls back to template/common_name matching.
 func findSessionNameByTemplate(store beads.Store, template string) string {
-	var fallback string // template-only match (weaker signal)
-
-	all, err := store.ListByLabel(sessionBeadLabel, 0)
+	snapshot, err := loadSessionBeadSnapshot(store)
 	if err != nil {
-		return fallback
+		return ""
 	}
-	for _, b := range all {
-		if b.Status == "closed" {
-			continue
-		}
-		// Exact agent_name matches are authoritative, including pool
-		// instances such as "worker-1" that carry pool_slot metadata.
-		if sessionBeadAgentName(b) == template {
-			if sn := b.Metadata["session_name"]; sn != "" {
-				return sn
-			}
-		}
-		// Skip pool instance beads — they should only be matched
-		// by their specific instance name, not the base template/common_name
-		// fallback used for singleton lookups.
-		if b.Metadata["pool_slot"] != "" {
-			continue
-		}
-		// Record first template/common_name match as fallback.
-		if fallback == "" {
-			if b.Metadata["template"] == template || b.Metadata["common_name"] == template {
-				if sn := b.Metadata["session_name"]; sn != "" {
-					fallback = sn
-				}
-			}
-		}
-	}
-	return fallback
+	return snapshot.FindSessionNameByTemplate(template)
 }
 
 // lookupSessionName resolves a qualified agent name to its bead-derived

@@ -12,6 +12,22 @@ import (
 	"github.com/gastownhall/gascity/internal/runtime"
 )
 
+type countingWakeMetadataStore struct {
+	*beads.MemStore
+	singleCalls int
+	batchCalls  int
+}
+
+func (s *countingWakeMetadataStore) SetMetadata(id, key, value string) error {
+	s.singleCalls++
+	return s.MemStore.SetMetadata(id, key, value)
+}
+
+func (s *countingWakeMetadataStore) SetMetadataBatch(id string, kvs map[string]string) error {
+	s.batchCalls++
+	return s.MemStore.SetMetadataBatch(id, kvs)
+}
+
 func TestPreWakeCommit(t *testing.T) {
 	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
 	clk := &clock.Fake{Time: now}
@@ -57,6 +73,34 @@ func TestPreWakeCommit(t *testing.T) {
 	}
 	if got.Metadata["continuation_epoch"] != "1" {
 		t.Errorf("stored continuation_epoch = %q, want 1", got.Metadata["continuation_epoch"])
+	}
+}
+
+func TestPreWakeCommitUsesSingleBatchMetadataWrite(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := &countingWakeMetadataStore{MemStore: beads.NewMemStore()}
+
+	b, err := store.Create(beads.Bead{
+		Title: "test-session",
+		Metadata: map[string]string{
+			"session_name": "test-worker",
+			"template":     "worker",
+			"generation":   "2",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := preWakeCommit(&b, store, clk); err != nil {
+		t.Fatalf("preWakeCommit: %v", err)
+	}
+	if store.batchCalls != 1 {
+		t.Fatalf("batchCalls = %d, want 1", store.batchCalls)
+	}
+	if store.singleCalls != 0 {
+		t.Fatalf("singleCalls = %d, want 0", store.singleCalls)
 	}
 }
 

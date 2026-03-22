@@ -35,11 +35,32 @@ func buildDesiredState(
 	store beads.Store,
 	stderr io.Writer,
 ) map[string]TemplateParams {
+	var sessionBeads *sessionBeadSnapshot
+	if store != nil {
+		var err error
+		sessionBeads, err = loadSessionBeadSnapshot(store)
+		if err != nil {
+			fmt.Fprintf(stderr, "buildDesiredState: listing session beads: %v\n", err) //nolint:errcheck
+		}
+	}
+	return buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, cfg, sp, store, sessionBeads, stderr)
+}
+
+func buildDesiredStateWithSessionBeads(
+	cityName, cityPath string,
+	beaconTime time.Time,
+	cfg *config.City,
+	sp runtime.Provider,
+	store beads.Store,
+	sessionBeads *sessionBeadSnapshot,
+	stderr io.Writer,
+) map[string]TemplateParams {
 	if cfg.Workspace.Suspended {
 		return nil
 	}
 
 	bp := newAgentBuildParams(cityName, cityPath, cfg, sp, beaconTime, store, stderr)
+	bp.sessionBeads = sessionBeads
 
 	// Pre-compute suspended rig paths.
 	suspendedRigPaths := make(map[string]bool)
@@ -145,7 +166,7 @@ func buildDesiredState(
 	// Phase 2: discover session beads created outside config iteration
 	// (e.g., by "gc session new"). Include them in desired state if they
 	// have a valid template and are not held/closed.
-	discoverSessionBeads(bp, cfg, store, desired, stderr)
+	discoverSessionBeads(bp, cfg, desired, stderr)
 
 	return desired
 }
@@ -156,19 +177,22 @@ func buildDesiredState(
 func discoverSessionBeads(
 	bp *agentBuildParams,
 	cfg *config.City,
-	store beads.Store,
 	desired map[string]TemplateParams,
 	stderr io.Writer,
 ) {
-	if store == nil {
+	sessionBeads := bp.sessionBeads
+	if sessionBeads == nil && bp.beadStore != nil {
+		var err error
+		sessionBeads, err = loadSessionBeadSnapshot(bp.beadStore)
+		if err != nil {
+			fmt.Fprintf(stderr, "buildDesiredState: listing session beads: %v\n", err) //nolint:errcheck
+			return
+		}
+	}
+	if sessionBeads == nil {
 		return
 	}
-	all, err := store.ListByLabel(sessionBeadLabel, 0)
-	if err != nil {
-		fmt.Fprintf(stderr, "buildDesiredState: listing session beads: %v\n", err) //nolint:errcheck
-		return
-	}
-	for _, b := range all {
+	for _, b := range sessionBeads.Open() {
 		if b.Status == "closed" {
 			continue
 		}

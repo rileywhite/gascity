@@ -40,6 +40,13 @@ func loadSessionBeads(store beads.Store) ([]beads.Bead, error) {
 	return result, nil
 }
 
+func snapshotOrLoadSessionBeads(store beads.Store, sessionBeads *sessionBeadSnapshot) ([]beads.Bead, error) {
+	if sessionBeads != nil {
+		return sessionBeads.Open(), nil
+	}
+	return loadSessionBeads(store)
+}
+
 // syncSessionBeads ensures every desired session has a corresponding session
 // bead. Accepts desiredState (sessionName → TemplateParams) instead of
 // map[string]TemplateParams, and uses runtime.Provider for liveness checks.
@@ -55,6 +62,8 @@ func loadSessionBeads(store beads.Store) ([]beads.Bead, error) {
 //
 // Returns a map of session_name → bead_id for all open session beads after
 // sync. Callers that don't need the index can ignore the return value.
+//
+//nolint:unparam // cityPath and skipClose are passed through to syncSessionBeadsWithSnapshot
 func syncSessionBeads(
 	cityPath string,
 	store beads.Store,
@@ -66,26 +75,55 @@ func syncSessionBeads(
 	stderr io.Writer,
 	skipClose bool,
 ) map[string]string {
+	openIndex, _ := syncSessionBeadsWithSnapshot(
+		cityPath, store, desiredState, sp, configuredNames, cfg, clk, stderr, skipClose, nil,
+	)
+	return openIndex
+}
+
+func syncSessionBeadsWithSnapshot(
+	cityPath string,
+	store beads.Store,
+	desiredState map[string]TemplateParams,
+	sp runtime.Provider,
+	configuredNames map[string]bool,
+	cfg *config.City,
+	clk clock.Clock,
+	stderr io.Writer,
+	skipClose bool,
+	sessionBeads *sessionBeadSnapshot,
+) (map[string]string, *sessionBeadSnapshot) {
 	if store == nil {
-		return nil
+		return nil, nil
 	}
 
-	existing, err := store.ListByLabel(sessionBeadLabel, 0)
+	existing, err := snapshotOrLoadSessionBeads(store, sessionBeads)
 	if err != nil {
 		fmt.Fprintf(stderr, "session beads: listing existing: %v\n", err) //nolint:errcheck
-		return nil
+		return nil, sessionBeads
 	}
 
 	// Index by session_name for O(1) lookup. Skip closed beads — a closed
 	// bead is a completed lifecycle record, not a live session. If an agent
 	// restarts after its bead was closed, we create a fresh bead.
 	bySessionName := make(map[string]beads.Bead, len(existing))
+	indexBySessionName := make(map[string]int, len(existing))
+	openBeads := make([]beads.Bead, len(existing))
+	copy(openBeads, existing)
 	for _, b := range existing {
 		if b.Status == "closed" {
 			continue
 		}
 		if sn := b.Metadata["session_name"]; sn != "" {
 			bySessionName[sn] = b
+		}
+	}
+	for i, b := range openBeads {
+		if b.Status == "closed" {
+			continue
+		}
+		if sn := b.Metadata["session_name"]; sn != "" {
+			indexBySessionName[sn] = i
 		}
 	}
 
@@ -204,6 +242,8 @@ func syncSessionBeads(
 				fmt.Fprintf(stderr, "session beads: creating bead for %s: %v\n", agentName, createErr) //nolint:errcheck
 			} else {
 				openIndex[sn] = newBead.ID
+				openBeads = append(openBeads, newBead)
+				indexBySessionName[sn] = len(openBeads) - 1
 				if liveAlias := strings.TrimSpace(meta["alias"]); liveAlias != "" && state == "active" {
 					if err := session.SyncRuntimeAlias(sp, sn, liveAlias); err != nil {
 						fmt.Fprintf(stderr, "session beads: syncing runtime alias %q for %s: %v\n", liveAlias, agentName, err) //nolint:errcheck
@@ -299,6 +339,9 @@ func syncSessionBeads(
 					for k, v := range batch {
 						b.Metadata[k] = v
 					}
+					if idx, ok := indexBySessionName[sn]; ok {
+						openBeads[idx] = b
+					}
 					if aliasValue, ok := batch["alias"]; ok && state == "active" {
 						if err := session.SyncRuntimeAlias(sp, sn, aliasValue); err != nil {
 							fmt.Fprintf(stderr, "session beads: syncing runtime alias %q for %s: %v\n", aliasValue, agentName, err) //nolint:errcheck
@@ -355,14 +398,22 @@ func syncSessionBeads(
 				continue
 			}
 			if configuredNames[sn] {
-				closeBead(store, b.ID, "suspended", now, stderr)
+				if closeBead(store, b.ID, "suspended", now, stderr) {
+					if idx, ok := indexBySessionName[sn]; ok {
+						openBeads[idx].Status = "closed"
+					}
+				}
 			} else {
-				closeBead(store, b.ID, "orphaned", now, stderr)
+				if closeBead(store, b.ID, "orphaned", now, stderr) {
+					if idx, ok := indexBySessionName[sn]; ok {
+						openBeads[idx].Status = "closed"
+					}
+				}
 			}
 		}
 	}
 
-	return openIndex
+	return openIndex, newSessionBeadSnapshot(openBeads)
 }
 
 // configuredSessionNames builds the set of ALL configured agent session names
@@ -379,6 +430,14 @@ func syncSessionBeads(
 // via "gc session new" from a singleton template) are classified as
 // "configured" rather than "orphaned" if they leave the desired set.
 func configuredSessionNames(cfg *config.City, cityName string, store beads.Store) map[string]bool {
+	sessionBeads, err := loadSessionBeadSnapshot(store)
+	if err != nil {
+		sessionBeads = nil
+	}
+	return configuredSessionNamesWithSnapshot(cfg, cityName, sessionBeads)
+}
+
+func configuredSessionNamesWithSnapshot(cfg *config.City, cityName string, sessionBeads *sessionBeadSnapshot) map[string]bool {
 	st := cfg.Workspace.SessionTemplate
 	names := make(map[string]bool, len(cfg.Agents))
 
@@ -393,7 +452,15 @@ func configuredSessionNames(cfg *config.City, cityName string, store beads.Store
 			// prevent scale-down orphan detection.
 			names[agent.SessionNameFor(cityName, a.QualifiedName(), st)] = true
 		} else {
-			names[lookupSessionNameOrLegacy(store, cityName, a.QualifiedName(), st)] = true
+			if sessionBeads != nil {
+				if sn := sessionBeads.FindSessionNameByTemplate(a.QualifiedName()); sn != "" {
+					names[sn] = true
+				} else {
+					names[agent.SessionNameFor(cityName, a.QualifiedName(), st)] = true
+				}
+			} else {
+				names[agent.SessionNameFor(cityName, a.QualifiedName(), st)] = true
+			}
 			singletonTemplates[a.QualifiedName()] = true
 		}
 	}
@@ -401,24 +468,18 @@ func configuredSessionNames(cfg *config.City, cityName string, store beads.Store
 	// Include fork session names: open session beads whose template matches
 	// a non-pool agent but whose session_name was not already added above.
 	// This prevents forked singletons from being classified as "orphaned".
-	if store != nil && len(singletonTemplates) > 0 {
-		all, err := store.ListByLabel(sessionBeadLabel, 0)
-		if err == nil {
-			for _, b := range all {
-				if b.Status == "closed" {
-					continue
-				}
-				sn := b.Metadata["session_name"]
-				if sn == "" || names[sn] {
-					continue
-				}
-				template := b.Metadata["template"]
-				if template == "" {
-					template = b.Metadata["common_name"]
-				}
-				if singletonTemplates[template] {
-					names[sn] = true
-				}
+	if sessionBeads != nil && len(singletonTemplates) > 0 {
+		for _, b := range sessionBeads.Open() {
+			sn := b.Metadata["session_name"]
+			if sn == "" || names[sn] {
+				continue
+			}
+			template := b.Metadata["template"]
+			if template == "" {
+				template = b.Metadata["common_name"]
+			}
+			if singletonTemplates[template] {
+				names[sn] = true
 			}
 		}
 	}
@@ -454,7 +515,7 @@ func setMetaBatch(store beads.Store, id string, batch map[string]string, stderr 
 // Follows the commit-signal pattern: metadata is written first, and Close
 // is only called if all writes succeed. If any write fails, the bead stays
 // open so the next tick retries the entire sequence.
-func closeBead(store beads.Store, id, reason string, now time.Time, stderr io.Writer) {
+func closeBead(store beads.Store, id, reason string, now time.Time, stderr io.Writer) bool {
 	ts := now.Format("2006-01-02T15:04:05Z07:00")
 	if setMetaBatch(store, id, map[string]string{
 		"state":        reason,
@@ -462,11 +523,13 @@ func closeBead(store beads.Store, id, reason string, now time.Time, stderr io.Wr
 		"closed_at":    ts,
 		"synced_at":    ts,
 	}, stderr) != nil {
-		return
+		return false
 	}
 	if err := store.Close(id); err != nil {
 		fmt.Fprintf(stderr, "session beads: closing %s: %v\n", id, err) //nolint:errcheck
+		return false
 	}
+	return true
 }
 
 // resolveAgentTemplate returns the config agent template name for a given

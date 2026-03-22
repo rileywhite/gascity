@@ -711,7 +711,7 @@ func TestDiscoverSessionBeads_IncludesBeadCreatedSessions(t *testing.T) {
 	bp := newAgentBuildParams("test", t.TempDir(), cfg, sp, time.Now(), store, io.Discard)
 
 	desired := make(map[string]TemplateParams)
-	discoverSessionBeads(bp, cfg, store, desired, io.Discard)
+	discoverSessionBeads(bp, cfg, desired, io.Discard)
 
 	if _, ok := desired["s-gc-100"]; !ok {
 		t.Errorf("expected bead-created session s-gc-100 in desired state, got keys: %v", mapKeys(desired))
@@ -747,7 +747,7 @@ func TestDiscoverSessionBeads_SkipsAlreadyDesired(t *testing.T) {
 	desired := map[string]TemplateParams{
 		"s-gc-100": {SessionName: "s-gc-100"},
 	}
-	discoverSessionBeads(bp, cfg, store, desired, io.Discard)
+	discoverSessionBeads(bp, cfg, desired, io.Discard)
 
 	// Should still be exactly 1 entry (not duplicated).
 	if len(desired) != 1 {
@@ -777,7 +777,7 @@ func TestDiscoverSessionBeads_SkipsNoTemplate(t *testing.T) {
 	bp := newAgentBuildParams("test", t.TempDir(), cfg, sp, time.Now(), store, io.Discard)
 
 	desired := make(map[string]TemplateParams)
-	discoverSessionBeads(bp, cfg, store, desired, io.Discard)
+	discoverSessionBeads(bp, cfg, desired, io.Discard)
 
 	if len(desired) != 0 {
 		t.Errorf("expected 0 desired entries for bead without template, got %d", len(desired))
@@ -938,7 +938,7 @@ func TestDiscoverSessionBeads_RigQualifiedTemplate(t *testing.T) {
 	bp := newAgentBuildParams("test", t.TempDir(), cfg, sp, time.Now(), store, io.Discard)
 
 	desired := make(map[string]TemplateParams)
-	discoverSessionBeads(bp, cfg, store, desired, io.Discard)
+	discoverSessionBeads(bp, cfg, desired, io.Discard)
 
 	if _, ok := desired["s-gc-300"]; !ok {
 		t.Errorf("expected rig-qualified bead session s-gc-300 in desired state, got keys: %v", mapKeys(desired))
@@ -997,7 +997,7 @@ func TestDiscoverSessionBeads_ForkGetsOwnSessionNameInEnv(t *testing.T) {
 	}
 
 	// Phase 2: discover the fork.
-	discoverSessionBeads(bp, cfg, store, desired, io.Discard)
+	discoverSessionBeads(bp, cfg, desired, io.Discard)
 
 	// Fork must be in desired state.
 	forkTP, ok := desired["s-fork-1"]

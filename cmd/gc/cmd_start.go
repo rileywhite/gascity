@@ -490,6 +490,9 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	buildAgents := func(c *config.City, currentSP runtime.Provider, store beads.Store) map[string]TemplateParams {
 		return buildDesiredState(cityName, cityPath, beaconTime, c, currentSP, store, stderr)
 	}
+	buildAgentsWithSessionBeads := func(c *config.City, currentSP runtime.Provider, store beads.Store, sessionBeads *sessionBeadSnapshot) map[string]TemplateParams {
+		return buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, c, currentSP, store, sessionBeads, stderr)
+	}
 
 	recorder := events.Discard
 	var eventProv events.Provider // nil when events disabled or FileRecorder fails
@@ -518,7 +521,7 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 		poolDeathHandlers := computePoolDeathHandlers(cfg, cityName, cityPath, sp)
 		watchDirs := config.WatchDirs(prov, cfg, cityPath)
 		configRev := config.Revision(fsys.OSFS{}, prov, cfg, cityPath)
-		return runController(cityPath, tomlPath, cfg, configRev, buildAgents, sp,
+		return runController(cityPath, tomlPath, cfg, configRev, buildAgents, buildAgentsWithSessionBeads, sp,
 			newDrainOps(sp), poolSessions, poolDeathHandlers, watchDirs, recorder, eventProv, stdout, stderr)
 	}
 
@@ -551,15 +554,18 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	}
 
 	// One-shot bead reconciliation: same code path as the daemon.
-	ds := buildDesiredState(cityName, cityPath, beaconTime, cfg, sp, oneShotStore, stderr)
-	cfgNames := configuredSessionNames(cfg, cityName, oneShotStore)
-	syncSessionBeads(cityPath, oneShotStore, ds, sp, cfgNames, cfg, clock.Real{}, stderr, true)
-
-	open, err := loadSessionBeads(oneShotStore)
+	sessionBeads, err := loadSessionBeadSnapshot(oneShotStore)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc start: loading session beads: %v\n", err) //nolint:errcheck
-		return 1
+		sessionBeads = nil
 	}
+	ds := buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, cfg, sp, oneShotStore, sessionBeads, stderr)
+	cfgNames := configuredSessionNamesWithSnapshot(cfg, cityName, sessionBeads)
+	_, sessionBeads = syncSessionBeadsWithSnapshot(
+		cityPath, oneShotStore, ds, sp, cfgNames, cfg, clock.Real{}, stderr, true, sessionBeads,
+	)
+
+	open := sessionBeads.Open()
 	dt := newDrainTracker()
 	poolDesired := derivePoolDesired(ds, cfg)
 	reconcileSessionBeads(
@@ -570,9 +576,14 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	)
 
 	// Post-reconcile sync: update bead state to reflect post-start reality.
-	ds = buildDesiredState(cityName, cityPath, beaconTime, cfg, sp, oneShotStore, stderr)
-	cfgNames = configuredSessionNames(cfg, cityName, oneShotStore)
-	syncSessionBeads(cityPath, oneShotStore, ds, sp, cfgNames, cfg, clock.Real{}, stderr, false)
+	sessionBeads, err = loadSessionBeadSnapshot(oneShotStore)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc start: loading session beads: %v\n", err) //nolint:errcheck
+		sessionBeads = nil
+	}
+	ds = buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, cfg, sp, oneShotStore, sessionBeads, stderr)
+	cfgNames = configuredSessionNamesWithSnapshot(cfg, cityName, sessionBeads)
+	syncSessionBeadsWithSnapshot(cityPath, oneShotStore, ds, sp, cfgNames, cfg, clock.Real{}, stderr, false, sessionBeads)
 
 	fmt.Fprintln(stdout, "City started.") //nolint:errcheck // best-effort stdout
 	return 0

@@ -35,6 +35,10 @@ type agentBuildParams struct {
 	// instead of the legacy SessionNameFor function.
 	beadStore beads.Store
 
+	// sessionBeads caches the open session-bead snapshot for the current
+	// desired-state build so per-agent resolution does not rescan the store.
+	sessionBeads *sessionBeadSnapshot
+
 	// beadNames caches qualifiedName → session_name mappings resolved
 	// during this build cycle. Populated lazily by resolveSessionName.
 	beadNames map[string]string

@@ -46,30 +46,25 @@ func preWakeCommit(
 		continuationEpoch++
 	}
 
-	// Write in a defined order so partial failures on sequential stores
-	// leave detectable (not impossible) state. Token first: a bead with
-	// a new token but old generation is detectable as "incomplete wake."
-	// Generation last: only bumped after all other fields are in place.
-	orderedWrites := []struct{ k, v string }{
-		{"instance_token", token},
-		{"continuation_epoch", strconv.Itoa(continuationEpoch)},
-		{"continuation_reset_pending", ""},
-		{"last_woke_at", clk.Now().UTC().Format(time.RFC3339)},
-		{"sleep_reason", ""},
-		{"sleep_intent", ""},
-		{"generation", strconv.Itoa(newGen)}, // must be last
+	// Use one batched metadata update to avoid paying multiple bd update
+	// round-trips before every wake.
+	batch := map[string]string{
+		"instance_token":             token,
+		"continuation_epoch":         strconv.Itoa(continuationEpoch),
+		"continuation_reset_pending": "",
+		"last_woke_at":               clk.Now().UTC().Format(time.RFC3339),
+		"sleep_reason":               "",
+		"sleep_intent":               "",
+		"generation":                 strconv.Itoa(newGen),
 	}
-	for _, kv := range orderedWrites {
-		if writeErr := store.SetMetadata(session.ID, kv.k, kv.v); writeErr != nil {
-			return 0, "", fmt.Errorf("pre-wake metadata commit (%s): %w", kv.k, writeErr)
-		}
+	if writeErr := store.SetMetadataBatch(session.ID, batch); writeErr != nil {
+		return 0, "", fmt.Errorf("pre-wake metadata commit: %w", writeErr)
 	}
-	// Update in-memory snapshot.
 	if session.Metadata == nil {
-		session.Metadata = make(map[string]string)
+		session.Metadata = make(map[string]string, len(batch))
 	}
-	for _, kv := range orderedWrites {
-		session.Metadata[kv.k] = kv.v
+	for k, v := range batch {
+		session.Metadata[k] = v
 	}
 
 	return newGen, token, nil
