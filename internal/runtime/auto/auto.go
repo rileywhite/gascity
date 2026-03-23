@@ -268,3 +268,11 @@ func (p *Provider) Capabilities() runtime.ProviderCapabilities {
 		CanReportActivity:   dc.CanReportActivity && ac.CanReportActivity,
 	}
 }
+
+// SleepCapability reports idle sleep capability for the routed backend.
+func (p *Provider) SleepCapability(name string) runtime.SessionSleepCapability {
+	if scp, ok := p.route(name).(runtime.SleepCapabilityProvider); ok {
+		return scp.SleepCapability(name)
+	}
+	return runtime.SessionSleepCapabilityDisabled
+}

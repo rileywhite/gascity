@@ -19,6 +19,10 @@ const (
 	WakeWait WakeReason = "wait"
 	// WakeWork means the session has hooked/open beads (Phase 4).
 	WakeWork WakeReason = "work"
+	// WakePending means the session is blocked on a structured interaction.
+	WakePending WakeReason = "pending"
+	// WakeDependency means another awake session depends on this template.
+	WakeDependency WakeReason = "dependency"
 )
 
 // ExecSpec defines a validated command for process creation.

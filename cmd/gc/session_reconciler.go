@@ -157,7 +157,13 @@ func reconcileSessionBeads(
 	}
 
 	// Phase 1: Forward pass (topo order) — wake sessions, handle alive state.
+	type wakeTarget struct {
+		session *beads.Bead
+		tp      TemplateParams
+		alive   bool
+	}
 	var startCandidates []startCandidate
+	var wakeTargets []wakeTarget
 	for i := range ordered {
 		session := &ordered[i]
 
@@ -222,6 +228,7 @@ func reconcileSessionBeads(
 
 		// Heal advisory state metadata.
 		healState(session, alive, store)
+		reconcileDetachedAt(session, store, resolveSessionSleepPolicy(*session, cfg, sp), alive, sp, clk)
 
 		// Stability check: detect rapid exit (crash).
 		if checkStability(session, cfg, alive, dt, store, clk) {
@@ -367,37 +374,51 @@ func reconcileSessionBeads(
 			// Fall through to wakeReasons — it will re-wake immediately if config present
 		}
 
-		// Compute wake reasons using the full contract (includes held_until,
-		// attachment checks, pool desired counts).
-		reasons := wakeReasons(*session, cfg, sp, poolDesired, workSet, readyWaitSet, clk)
-		shouldWake := len(reasons) > 0
+		wakeTargets = append(wakeTargets, wakeTarget{session: session, tp: tp, alive: alive})
+	}
 
-		if shouldWake && !alive {
+	evalInput := make([]beads.Bead, len(wakeTargets))
+	for i, target := range wakeTargets {
+		evalInput[i] = *target.session
+	}
+	wakeEvals := computeWakeEvaluations(evalInput, cfg, sp, poolDesired, workSet, readyWaitSet, clk)
+
+	for _, target := range wakeTargets {
+		eval, ok := wakeEvals[target.session.ID]
+		if !ok {
+			eval = wakeEvaluation{Policy: resolveSessionSleepPolicy(*target.session, cfg, sp)}
+		}
+		persistSleepPolicyMetadata(target.session, store, eval.Policy, eval.ConfigSuppressed)
+		shouldWake := len(eval.Reasons) > 0
+
+		if shouldWake && !target.alive {
 			// Session should be awake but isn't — wake it.
-			if sessionIsQuarantined(*session, clk) {
+			if sessionIsQuarantined(*target.session, clk) {
 				continue // crash-loop protection
 			}
 			startCandidates = append(startCandidates, startCandidate{
-				session: session,
-				tp:      tp,
+				session: target.session,
+				tp:      target.tp,
 				order:   len(startCandidates),
 			})
 		}
 
-		if shouldWake && alive {
+		if shouldWake && target.alive {
 			// Session is correctly awake. Cancel any non-drift drain
 			// (handles scale-back-up: agent returns to desired set while draining).
-			cancelSessionDrain(*session, dt)
+			cancelSessionDrain(*target.session, dt)
 		}
 
-		if !shouldWake && alive {
+		if !shouldWake && target.alive {
 			// No reason to be awake — begin drain.
 			reason := "no-wake-reason"
-			if intent := session.Metadata["sleep_intent"]; intent != "" {
+			if eval.ConfigSuppressed && eval.Policy.enabled() {
+				reason = "idle"
+			} else if intent := target.session.Metadata["sleep_intent"]; intent != "" {
 				reason = intent
 			}
-			beginSessionDrain(*session, sp, dt, reason, clk, defaultDrainTimeout)
-			fmt.Fprintf(stdout, "Draining session '%s': %s\n", name, reason) //nolint:errcheck
+			beginSessionDrain(*target.session, sp, dt, reason, clk, defaultDrainTimeout)
+			fmt.Fprintf(stdout, "Draining session '%s': %s\n", target.session.Metadata["session_name"], reason) //nolint:errcheck
 		}
 	}
 
@@ -410,7 +431,7 @@ func reconcileSessionBeads(
 	sessionLookup := func(id string) *beads.Bead {
 		return beadByID[id]
 	}
-	advanceSessionDrains(dt, sp, store, sessionLookup, cfg, poolDesired, workSet, readyWaitSet, clk)
+	advanceSessionDrainsWithSessions(dt, sp, store, sessionLookup, ordered, cfg, poolDesired, workSet, readyWaitSet, clk)
 
 	return plannedWakes
 }

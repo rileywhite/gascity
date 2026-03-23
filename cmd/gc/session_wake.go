@@ -52,6 +52,7 @@ func preWakeCommit(
 		"instance_token":             token,
 		"continuation_epoch":         strconv.Itoa(continuationEpoch),
 		"continuation_reset_pending": "",
+		"detached_at":                "",
 		"last_woke_at":               clk.Now().UTC().Format(time.RFC3339),
 		"sleep_reason":               "",
 		"sleep_intent":               "",
@@ -157,6 +158,28 @@ func advanceSessionDrains(
 	readyWaitSet map[string]bool,
 	clk clock.Clock,
 ) {
+	var sessions []beads.Bead
+	for id := range dt.all() {
+		if session := sessionLookup(id); session != nil {
+			sessions = append(sessions, *session)
+		}
+	}
+	advanceSessionDrainsWithSessions(dt, sp, store, sessionLookup, sessions, cfg, poolDesired, workSet, readyWaitSet, clk)
+}
+
+func advanceSessionDrainsWithSessions(
+	dt *drainTracker,
+	sp runtime.Provider,
+	store beads.Store,
+	sessionLookup func(id string) *beads.Bead,
+	sessions []beads.Bead,
+	cfg *config.City,
+	poolDesired map[string]int,
+	workSet map[string]bool,
+	readyWaitSet map[string]bool,
+	clk clock.Clock,
+) {
+	wakeEvals := computeWakeEvaluations(sessions, cfg, sp, poolDesired, workSet, readyWaitSet, clk)
 	for id, ds := range dt.all() {
 		session := sessionLookup(id)
 		if session == nil {
@@ -176,8 +199,7 @@ func advanceSessionDrains(
 		// they represent explicit lifecycle decisions that should not be
 		// reversed by the wake contract (the session is leaving the desired set).
 		if ds.reason != "config-drift" && ds.reason != "orphaned" && ds.reason != "suspended" {
-			reasons := wakeReasons(*session, cfg, sp, poolDesired, workSet, readyWaitSet, clk)
-			if len(reasons) > 0 {
+			if eval, ok := wakeEvals[session.ID]; ok && len(eval.Reasons) > 0 {
 				dt.remove(id)
 				continue
 			}

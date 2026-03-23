@@ -10,6 +10,7 @@ lives in the [Architecture](/architecture/index) section.
 
 - `Accepted`: approved direction
 - `Implemented`: code landed, doc kept for context
+- `Proposed`: drafted direction pending approval
 
 ## Current Design Set
 
@@ -19,3 +20,4 @@ lives in the [Architecture](/architecture/index) section.
 | `api-ops-design` | Implemented | State-mutation API surface |
 | `agent-pools` | Implemented | Feature shipped before the current template existed |
 | `dependency-aware-bounded-parallel-lifecycle` | Implemented | Bounded parallel start/stop waves for session lifecycle |
+| `idle-session-sleep` | Accepted | Idle-sleep policy, precedence, and wake mechanics |

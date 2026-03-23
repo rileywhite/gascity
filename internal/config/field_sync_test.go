@@ -35,6 +35,7 @@ func TestAgentFieldSync(t *testing.T) {
 		"Fallback":               "pack composition hint, not overridable at runtime",
 		"PoolName":               "internal field set during pool expansion, not user-configurable",
 		"Implicit":               "runtime-only, set during InjectImplicitAgents, not user-configurable",
+		"SleepAfterIdleSource":   "runtime-only provenance, derived from the layer that set SleepAfterIdle",
 	}
 
 	// Fields on AgentOverride/AgentPatch that don't map 1:1 to Agent fields.
@@ -130,6 +131,7 @@ func TestApplyAgentPatchCoversAllFields(t *testing.T) {
 		StartCommand:            strVal("claude --dangerously"),
 		Nudge:                   strVal("wake up"),
 		IdleTimeout:             strVal("15m"),
+		SleepAfterIdle:          strVal("30s"),
 		InstallAgentHooks:       []string{"claude"},
 		HooksInstalled:          &trueVal,
 		SessionSetup:            []string{"setup-cmd"},
@@ -257,6 +259,7 @@ func TestApplyAgentOverrideCoversAllFields(t *testing.T) {
 		StartCommand:            strVal("claude --dangerously"),
 		Nudge:                   strVal("wake up"),
 		IdleTimeout:             strVal("15m"),
+		SleepAfterIdle:          strVal("30s"),
 		InstallAgentHooks:       []string{"claude"},
 		HooksInstalled:          &trueVal,
 		SessionSetup:            []string{"setup-cmd"},

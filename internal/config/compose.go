@@ -168,6 +168,10 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 	// explicit agents always take precedence.
 	InjectImplicitAgents(root)
 
+	// Canonicalize duration-or-"off" session sleep fields after all config
+	// layers have been applied so runtime consumers can trust the values.
+	NormalizeSessionSleepFields(root)
+
 	// Validate all duration strings in the fully-merged config.
 	prov.Warnings = append(prov.Warnings, ValidateDurations(root, path)...)
 
@@ -256,6 +260,9 @@ func mergeFragment(base, fragment *City, fragMeta toml.MetaData, fragPath string
 	}
 	if fragMeta.IsDefined("api") {
 		base.API = fragment.API
+	}
+	if fragMeta.IsDefined("session_sleep") {
+		base.SessionSleep = fragment.SessionSleep
 	}
 	if fragMeta.IsDefined("convergence") {
 		base.Convergence = fragment.Convergence

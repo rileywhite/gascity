@@ -812,6 +812,10 @@ func applyAgentOverride(a *Agent, ov *AgentOverride) {
 	if ov.IdleTimeout != nil {
 		a.IdleTimeout = *ov.IdleTimeout
 	}
+	if ov.SleepAfterIdle != nil {
+		a.SleepAfterIdle = NormalizeSleepAfterIdle(*ov.SleepAfterIdle)
+		a.SleepAfterIdleSource = "rig_override"
+	}
 	if len(ov.InstallAgentHooks) > 0 {
 		a.InstallAgentHooks = append([]string(nil), ov.InstallAgentHooks...)
 	}

@@ -90,6 +90,8 @@ type City struct {
 	API APIConfig `toml:"api,omitempty"`
 	// ChatSessions configures chat session behavior (auto-suspend).
 	ChatSessions ChatSessionsConfig `toml:"chat_sessions,omitempty"`
+	// SessionSleep configures idle sleep policy defaults for managed sessions.
+	SessionSleep SessionSleepConfig `toml:"session_sleep,omitempty"`
 	// Convergence configures convergence loop limits.
 	Convergence ConvergenceConfig `toml:"convergence,omitempty"`
 	// Services declares workspace-owned HTTP services mounted on the
@@ -179,6 +181,9 @@ type Rig struct {
 	// invoked with only a bead ID (no explicit target). Resolved via
 	// resolveAgentIdentity. Example: "rig/polecat"
 	DefaultSlingTarget string `toml:"default_sling_target,omitempty"`
+	// SessionSleep overrides workspace-level idle sleep defaults for agents in
+	// this rig.
+	SessionSleep SessionSleepConfig `toml:"session_sleep,omitempty"`
 }
 
 // AgentOverride modifies a pack-stamped agent for a specific rig.
@@ -216,6 +221,9 @@ type AgentOverride struct {
 	Nudge *string `toml:"nudge,omitempty"`
 	// IdleTimeout overrides the idle timeout duration string (e.g., "30s", "5m", "1h").
 	IdleTimeout *string `toml:"idle_timeout,omitempty"`
+	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
+	// duration string (e.g., "30s") or "off".
+	SleepAfterIdle *string `toml:"sleep_after_idle,omitempty"`
 	// InstallAgentHooks overrides the agent's install_agent_hooks list.
 	InstallAgentHooks []string `toml:"install_agent_hooks,omitempty"`
 	// HooksInstalled overrides automatic hook detection.
@@ -767,6 +775,19 @@ type ChatSessionsConfig struct {
 	IdleTimeout string `toml:"idle_timeout,omitempty"`
 }
 
+// SessionSleepConfig configures default idle sleep policies by session class.
+type SessionSleepConfig struct {
+	// InteractiveResume applies to attachable sessions using wake_mode=resume.
+	// Accepts a duration string or "off".
+	InteractiveResume string `toml:"interactive_resume,omitempty"`
+	// InteractiveFresh applies to attachable sessions using wake_mode=fresh.
+	// Accepts a duration string or "off".
+	InteractiveFresh string `toml:"interactive_fresh,omitempty"`
+	// NonInteractive applies to sessions with attach=false. Accepts a duration
+	// string or "off".
+	NonInteractive string `toml:"noninteractive,omitempty"`
+}
+
 // IdleTimeoutDuration parses IdleTimeout, returning 0 if unset or invalid.
 func (c ChatSessionsConfig) IdleTimeoutDuration() time.Duration {
 	if c.IdleTimeout == "" {
@@ -1088,6 +1109,9 @@ type Agent struct {
 	// the controller kills and restarts it. Duration string (e.g., "15m", "1h").
 	// Empty (default) disables idle checking.
 	IdleTimeout string `toml:"idle_timeout,omitempty"`
+	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
+	// duration string (e.g., "30s") or "off".
+	SleepAfterIdle string `toml:"sleep_after_idle,omitempty"`
 	// InstallAgentHooks overrides workspace-level install_agent_hooks for this agent.
 	// When set, replaces (not adds to) the workspace default.
 	InstallAgentHooks []string `toml:"install_agent_hooks,omitempty"`
@@ -1157,6 +1181,9 @@ type Agent struct {
 	// "resume" (default): reuse provider session key for conversation continuity.
 	// "fresh": start a new provider session on every wake (polecat pattern).
 	WakeMode string `toml:"wake_mode,omitempty" jsonschema:"enum=resume,enum=fresh"`
+	// SleepAfterIdleSource records which config layer supplied SleepAfterIdle.
+	// Runtime-only — not persisted to TOML or JSON.
+	SleepAfterIdleSource string `toml:"-" json:"-"`
 	// PoolName is the template agent's qualified name, set during pool
 	// expansion. Pool instances use this for label-based work discovery
 	// (e.g., pool:dog) rather than their instance name (e.g., pool:dog-1).
@@ -1174,6 +1201,19 @@ func (a *Agent) IdleTimeoutDuration() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// EffectiveWakeMode returns the configured wake mode, defaulting to "resume".
+func (a *Agent) EffectiveWakeMode() string {
+	if a.WakeMode == "fresh" {
+		return "fresh"
+	}
+	return "resume"
+}
+
+// AttachEnabled reports whether the agent supports interactive attachment.
+func (a *Agent) AttachEnabled() bool {
+	return a.Attach == nil || *a.Attach
 }
 
 // EffectiveWorkQuery returns the work query command for this agent.
@@ -1702,5 +1742,6 @@ func Parse(data []byte) (*City, error) {
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	NormalizeSessionSleepFields(&cfg)
 	return &cfg, nil
 }

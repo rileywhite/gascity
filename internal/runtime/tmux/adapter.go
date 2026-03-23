@@ -163,6 +163,11 @@ func (p *Provider) Capabilities() runtime.ProviderCapabilities {
 	}
 }
 
+// SleepCapability reports that tmux supports full idle sleep semantics.
+func (p *Provider) SleepCapability(string) runtime.SessionSleepCapability {
+	return runtime.SessionSleepCapabilityFull
+}
+
 // WaitForIdle waits for the named session to reach an idle prompt.
 func (p *Provider) WaitForIdle(name string, timeout time.Duration) error {
 	return p.tm.WaitForIdle(name, timeout)
