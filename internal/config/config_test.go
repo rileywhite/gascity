@@ -1234,7 +1234,7 @@ func TestEffectiveWorkQueryPoolNameOverride(t *testing.T) {
 		PoolName: "hello-world/dog",
 	}
 	got := a.EffectiveWorkQuery()
-	want := "bd ready --metadata-field gc.routed_to=hello-world/dog-1 --unassigned --json --limit=1 2>/dev/null"
+	want := "bd ready --metadata-field gc.routed_to=hello-world/dog --unassigned --json --limit=1 2>/dev/null"
 	if got != want {
 		t.Errorf("EffectiveWorkQuery() = %q, want %q", got, want)
 	}
@@ -3333,7 +3333,7 @@ func TestValidateDependsOn(t *testing.T) {
 func TestInjectImplicitAgents_NoProviders(t *testing.T) {
 	// Even with no configured model providers, the built-in workflow control
 	// lane is always available.
-	cfg := &City{}
+	cfg := &City{Daemon: DaemonConfig{GraphWorkflows: true}}
 	InjectImplicitAgents(cfg)
 
 	if len(cfg.Agents) != 1 {
@@ -3351,6 +3351,7 @@ func TestInjectImplicitAgents_NoProviders(t *testing.T) {
 func TestInjectImplicitAgents_WorkspaceProvider(t *testing.T) {
 	// workspace.provider alone is enough — no [providers.claude] section needed.
 	cfg := &City{
+		Daemon:    DaemonConfig{GraphWorkflows: true},
 		Workspace: Workspace{Provider: "claude"},
 	}
 	InjectImplicitAgents(cfg)
@@ -3373,6 +3374,7 @@ func TestInjectImplicitAgents_WorkspaceProvider(t *testing.T) {
 func TestInjectImplicitAgents_WorkspaceProviderPlusExplicit(t *testing.T) {
 	// workspace.provider = "claude" + [providers.codex] → both get implicit agents.
 	cfg := &City{
+		Daemon:    DaemonConfig{GraphWorkflows: true},
 		Workspace: Workspace{Provider: "claude"},
 		Providers: map[string]ProviderSpec{
 			"codex": {},
@@ -3398,6 +3400,7 @@ func TestInjectImplicitAgents_WorkspaceProviderPlusExplicit(t *testing.T) {
 func TestInjectImplicitAgents_WorkspaceProviderNoDuplicate(t *testing.T) {
 	// workspace.provider = "claude" + [providers.claude] → no duplicate.
 	cfg := &City{
+		Daemon:    DaemonConfig{GraphWorkflows: true},
 		Workspace: Workspace{Provider: "claude"},
 		Providers: map[string]ProviderSpec{
 			"claude": {},
@@ -3414,6 +3417,7 @@ func TestInjectImplicitAgents_WorkspaceProviderNonBuiltin(t *testing.T) {
 	// A non-builtin workspace.provider without a matching [providers.X]
 	// section must NOT create an implicit agent (it would fail at resolution).
 	cfg := &City{
+		Daemon:    DaemonConfig{GraphWorkflows: true},
 		Workspace: Workspace{Provider: "my-custom-llm"},
 	}
 	InjectImplicitAgents(cfg)
@@ -3427,6 +3431,7 @@ func TestInjectImplicitAgents_WorkspaceProviderNonBuiltinWithEntry(t *testing.T)
 	// A non-builtin workspace.provider WITH a matching [providers.X]
 	// section should still work.
 	cfg := &City{
+		Daemon:    DaemonConfig{GraphWorkflows: true},
 		Workspace: Workspace{Provider: "my-custom-llm"},
 		Providers: map[string]ProviderSpec{
 			"my-custom-llm": {Command: "ollama"},
@@ -3447,6 +3452,7 @@ func TestInjectImplicitAgents_ExplicitAgentUnconfiguredProvider(t *testing.T) {
 	// workspace.provider is preserved, but no implicit agent is created
 	// for that provider.
 	cfg := &City{
+		Daemon: DaemonConfig{GraphWorkflows: true},
 		Providers: map[string]ProviderSpec{
 			"claude": {},
 		},
@@ -3480,6 +3486,7 @@ func TestInjectImplicitAgents_ExplicitAgentUnconfiguredProvider(t *testing.T) {
 func TestInjectImplicitAgents_ConfiguredOnly(t *testing.T) {
 	// Only providers in cfg.Providers get implicit agents.
 	cfg := &City{
+		Daemon: DaemonConfig{GraphWorkflows: true},
 		Providers: map[string]ProviderSpec{
 			"claude": {},
 			"codex":  {},
@@ -3518,6 +3525,7 @@ func TestInjectImplicitAgents_CustomProvider(t *testing.T) {
 	// Multiple builtins + multiple custom providers: builtins come first
 	// in canonical order, then customs in alphabetical order.
 	cfg := &City{
+		Daemon: DaemonConfig{GraphWorkflows: true},
 		Providers: map[string]ProviderSpec{
 			"codex":    {},
 			"claude":   {},
@@ -3544,6 +3552,7 @@ func TestInjectImplicitAgents_CustomProvider(t *testing.T) {
 
 func TestInjectImplicitAgents_ExplicitWins(t *testing.T) {
 	cfg := &City{
+		Daemon: DaemonConfig{GraphWorkflows: true},
 		Providers: map[string]ProviderSpec{
 			"claude": {},
 			"codex":  {},
@@ -3583,6 +3592,7 @@ func TestInjectImplicitAgents_ExplicitWins(t *testing.T) {
 func TestInjectImplicitAgents_RigScopedExplicitDoesNotBlockCity(t *testing.T) {
 	// An explicit rig-scoped "claude" should NOT prevent the implicit city-scoped one.
 	cfg := &City{
+		Daemon: DaemonConfig{GraphWorkflows: true},
 		Providers: map[string]ProviderSpec{
 			"claude": {},
 			"codex":  {},
@@ -3596,7 +3606,7 @@ func TestInjectImplicitAgents_RigScopedExplicitDoesNotBlockCity(t *testing.T) {
 
 	// 1 explicit rig-scoped claude + 2 implicit city-scoped + 1 implicit rig-scoped codex
 	// (the explicit rig-scoped claude blocks the implicit rig-scoped claude).
-	want := 1 + 2 + 1 + 1 // + workflow-control
+	want := 1 + 2 + 1 + 2 // + city & rig workflow-control
 	if len(cfg.Agents) != want {
 		t.Fatalf("got %d agents, want %d", len(cfg.Agents), want)
 	}
@@ -3628,6 +3638,7 @@ func TestInjectImplicitAgents_RigScopedExplicitDoesNotBlockCity(t *testing.T) {
 func TestInjectImplicitAgents_RigInjection(t *testing.T) {
 	// With rigs defined, implicit agents are injected for each rig too.
 	cfg := &City{
+		Daemon: DaemonConfig{GraphWorkflows: true},
 		Providers: map[string]ProviderSpec{
 			"claude": {},
 			"codex":  {},
@@ -3639,8 +3650,8 @@ func TestInjectImplicitAgents_RigInjection(t *testing.T) {
 	}
 	InjectImplicitAgents(cfg)
 
-	// 2 city-scoped + 2×2 rig-scoped + workflow-control = 7
-	want := 7
+	// 2 city-scoped + 2×2 rig-scoped + 3 workflow-control (city + 2 rigs) = 9
+	want := 9
 	if len(cfg.Agents) != want {
 		t.Fatalf("got %d agents, want %d", len(cfg.Agents), want)
 	}
@@ -3653,14 +3664,14 @@ func TestInjectImplicitAgents_RigInjection(t *testing.T) {
 				rigAgents++
 			}
 		}
-		if rigAgents != 2 {
-			t.Errorf("rig %q: got %d implicit agents, want 2", rigName, rigAgents)
+		if rigAgents != 3 {
+			t.Errorf("rig %q: got %d implicit agents, want 3 (2 providers + workflow-control)", rigName, rigAgents)
 		}
 	}
 
-	// Verify all rig-scoped agents have correct pool config.
+	// Verify all rig-scoped provider agents have correct pool config.
 	for _, a := range cfg.Agents {
-		if a.Dir != "" && a.Implicit {
+		if a.Dir != "" && a.Implicit && a.Name != WorkflowControlAgentName {
 			if a.Pool == nil || a.Pool.Min != 0 || a.Pool.Max != -1 {
 				t.Errorf("rig agent %s/%s: unexpected pool %+v", a.Dir, a.Name, a.Pool)
 			}
@@ -3719,8 +3730,8 @@ dir = "myrig"
 	if claude.MaxActiveSessions == nil || *claude.MaxActiveSessions != 2 {
 		t.Errorf("claude max = %v, want 2", claude.MaxActiveSessions)
 	}
-	if claude.MinActiveSessions != 0 {
-		t.Errorf("claude min = %d, want 0", claude.MinActiveSessions)
+	if claude.MinActiveSessions == nil || *claude.MinActiveSessions != 0 {
+		t.Errorf("claude min = %v, want 0 (explicitly set)", claude.MinActiveSessions)
 	}
 
 	// Agent without explicit max inherits from rig
@@ -3795,8 +3806,8 @@ min_active_sessions = 1
 	if worker.MaxActiveSessions == nil || *worker.MaxActiveSessions != 5 {
 		t.Errorf("max = %v, want 5", worker.MaxActiveSessions)
 	}
-	if worker.MinActiveSessions != 1 {
-		t.Errorf("min = %d, want 1", worker.MinActiveSessions)
+	if worker.MinActiveSessions == nil || *worker.MinActiveSessions != 1 {
+		t.Errorf("min = %v, want 1", worker.MinActiveSessions)
 	}
 }
 

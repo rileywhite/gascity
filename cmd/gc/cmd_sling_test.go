@@ -277,7 +277,7 @@ func TestDoSlingBeadToPool(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("doSling returned %d, want 0; stderr: %s", code, stderr.String())
 	}
-	want := "bd update 'HW-7' --add-label=pool:hello-world/polecat"
+	want := "bd update 'HW-7' --set-metadata gc.routed_to=hello-world/polecat"
 	if runner.calls[0] != want {
 		t.Errorf("runner call = %q, want %q", runner.calls[0], want)
 	}
@@ -1469,15 +1469,6 @@ title = "Do work"
 			if bead.Metadata[graphExecutionRouteMetaKey] != "mayor" {
 				t.Fatalf("workflow-finalize execution route = %q, want mayor", bead.Metadata[graphExecutionRouteMetaKey])
 			}
-			foundControlLabel := false
-			for _, label := range bead.Labels {
-				if label == config.WorkflowControlPoolLabel {
-					foundControlLabel = true
-				}
-			}
-			if !foundControlLabel {
-				t.Fatalf("workflow-finalize labels = %#v, want %q", bead.Labels, config.WorkflowControlPoolLabel)
-			}
 			assigned++
 		default:
 			if bead.Assignee != "mayor" {
@@ -1590,6 +1581,9 @@ func TestOnFormulaGraphWorkflowPokesOnce(t *testing.T) {
 	runner := newFakeRunner()
 	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
+	cfg.Daemon.GraphWorkflows = true
+	applyFeatureFlags(cfg)
+	t.Cleanup(func() { applyFeatureFlags(&config.City{}) })
 	config.InjectImplicitAgents(cfg)
 	cfg.FormulaLayers.City = []string{testFormulaDir(t)}
 	a := config.Agent{Name: "mayor"}
@@ -2370,7 +2364,7 @@ func TestDryRunPool(t *testing.T) {
 	if !strings.Contains(out, "Pool:        hw/polecat (min=1 max=3)") {
 		t.Errorf("stdout missing pool info: %s", out)
 	}
-	if !strings.Contains(out, "bd update {} --add-label=pool:hw/polecat") {
+	if !strings.Contains(out, "bd update {} --set-metadata gc.routed_to=hw/polecat") {
 		t.Errorf("stdout missing sling query: %s", out)
 	}
 	if !strings.Contains(out, "Pool agents share a work queue via labels") {

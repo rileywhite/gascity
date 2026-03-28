@@ -25,11 +25,15 @@ func sessionBead(id, status string) beads.Bead {
 }
 
 func poolAgent(name, dir string, max *int, min int) config.Agent {
+	var minPtr *int
+	if min > 0 {
+		minPtr = &min
+	}
 	return config.Agent{
 		Name:              name,
 		Dir:               dir,
 		MaxActiveSessions: max,
-		MinActiveSessions: min,
+		MinActiveSessions: minPtr,
 		Pool:              &config.PoolConfig{Min: min, Max: -1}, // mark as pool
 	}
 }
@@ -45,7 +49,7 @@ func TestComputePoolDesiredStates_ResumeBeatsNew(t *testing.T) {
 	}
 	sessions := []beads.Bead{sessionBead("sess-1", "open")}
 
-	result := ComputePoolDesiredStates(cfg, work, sessions)
+	result := ComputePoolDesiredStates(cfg, work, sessions, nil)
 
 	if len(result) != 1 {
 		t.Fatalf("len(result) = %d, want 1", len(result))
@@ -76,7 +80,7 @@ func TestComputePoolDesiredStates_MaxCapsTotal(t *testing.T) {
 		workBead("w3", "rig/claude", "", "open", 1),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	if len(result) != 1 {
 		t.Fatalf("len(result) = %d, want 1", len(result))
@@ -106,7 +110,7 @@ func TestComputePoolDesiredStates_MaxCapsResumeBeads(t *testing.T) {
 		sessionBead("s3", "open"),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, sessions)
+	result := ComputePoolDesiredStates(cfg, work, sessions, nil)
 
 	// Max=2: only 2 of the 3 in-progress beads get sessions.
 	if len(result) != 1 {
@@ -122,7 +126,7 @@ func TestComputePoolDesiredStates_MinFillsIdle(t *testing.T) {
 		Agents: []config.Agent{poolAgent("wf-ctrl", "", intPtr(1), 1)},
 	}
 
-	result := ComputePoolDesiredStates(cfg, nil, nil)
+	result := ComputePoolDesiredStates(cfg, nil, nil, nil)
 
 	if len(result) != 1 {
 		t.Fatalf("len(result) = %d, want 1", len(result))
@@ -137,7 +141,7 @@ func TestComputePoolDesiredStates_MinRespectsMax(t *testing.T) {
 		Agents: []config.Agent{poolAgent("worker", "", intPtr(0), 5)},
 	}
 
-	result := ComputePoolDesiredStates(cfg, nil, nil)
+	result := ComputePoolDesiredStates(cfg, nil, nil, nil)
 
 	// Max=0 should prevent any sessions even though min=5.
 	total := 0
@@ -165,7 +169,7 @@ func TestComputePoolDesiredStates_WorkspaceCap(t *testing.T) {
 		workBead("w4", "rig/codex", "", "open", 2),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	total := 0
 	for _, ds := range result {
@@ -191,7 +195,7 @@ func TestComputePoolDesiredStates_RigCap(t *testing.T) {
 		workBead("w3", "rig/codex", "", "open", 3),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	total := 0
 	for _, ds := range result {
@@ -220,7 +224,7 @@ func TestComputePoolDesiredStates_NestedCaps(t *testing.T) {
 		workBead("w4", "rig/codex", "", "open", 2),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	total := 0
 	perAgent := make(map[string]int)
@@ -253,7 +257,7 @@ func TestComputePoolDesiredStates_UnlimitedWhenUnset(t *testing.T) {
 		workBead("w5", "claude", "", "open", 1),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	total := 0
 	for _, ds := range result {
@@ -273,7 +277,7 @@ func TestComputePoolDesiredStates_ClosedSessionNotResumed(t *testing.T) {
 	}
 	sessions := []beads.Bead{sessionBead("dead-session", "closed")}
 
-	result := ComputePoolDesiredStates(cfg, work, sessions)
+	result := ComputePoolDesiredStates(cfg, work, sessions, nil)
 
 	// The session bead is closed, so this shouldn't be a resume request.
 	// It also shouldn't be a new request because it has an assignee.
@@ -297,7 +301,7 @@ func TestComputePoolDesiredStates_DedupsResumeForSameSession(t *testing.T) {
 	}
 	sessions := []beads.Bead{sessionBead("sess-1", "open")}
 
-	result := ComputePoolDesiredStates(cfg, work, sessions)
+	result := ComputePoolDesiredStates(cfg, work, sessions, nil)
 
 	// Should deduplicate — only one resume request for sess-1.
 	resumeCount := 0
@@ -323,7 +327,7 @@ func TestComputePoolDesiredStates_PriorityOrder(t *testing.T) {
 		workBead("w-mid", "claude", "", "open", 5),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	if len(result) != 1 || len(result[0].Requests) != 2 {
 		t.Fatalf("expected 2 requests, got %d", len(result[0].Requests))
@@ -347,7 +351,7 @@ func TestComputePoolDesiredStates_SuspendedAgentSkipped(t *testing.T) {
 		workBead("w1", "claude", "", "open", 5),
 	}
 
-	result := ComputePoolDesiredStates(cfg, work, nil)
+	result := ComputePoolDesiredStates(cfg, work, nil, nil)
 
 	total := 0
 	for _, ds := range result {

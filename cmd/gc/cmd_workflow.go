@@ -198,7 +198,8 @@ func decorateDynamicFragmentRecipe(fragment *formula.FragmentRecipe, source bead
 	if err != nil {
 		return err
 	}
-	controlRoute, err := workflowControlBinding(store, cityName, cfg)
+	routingRigContext := graphRouteRigContext(defaultRoute.qualifiedName)
+	controlRoute, err := workflowControlBinding(store, cityName, cfg, routingRigContext)
 	if err != nil {
 		return err
 	}
@@ -232,7 +233,6 @@ func decorateDynamicFragmentRecipe(fragment *formula.FragmentRecipe, source bead
 	}
 	bindingCache := make(map[string]graphRouteBinding, len(fragment.Steps))
 	resolving := make(map[string]bool, len(fragment.Steps))
-	routingRigContext := graphRouteRigContext(defaultRoute.qualifiedName)
 	for i := range fragment.Steps {
 		step := &fragment.Steps[i]
 		switch step.Metadata["gc.kind"] {

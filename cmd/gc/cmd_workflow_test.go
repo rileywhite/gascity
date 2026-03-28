@@ -22,6 +22,7 @@ func TestDecorateDynamicFragmentRecipeSupportsExplicitPerStepAgents(t *testing.T
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "mayor"},
 			{Name: "reviewer"},
@@ -94,16 +95,6 @@ func TestDecorateDynamicFragmentRecipeSupportsExplicitPerStepAgents(t *testing.T
 	if control.Metadata[graphExecutionRouteMetaKey] != "reviewer" {
 		t.Fatalf("review scope-check execution route = %q, want reviewer", control.Metadata[graphExecutionRouteMetaKey])
 	}
-	foundControlLabel := false
-	for _, label := range control.Labels {
-		if label == config.WorkflowControlPoolLabel {
-			foundControlLabel = true
-		}
-	}
-	if !foundControlLabel {
-		t.Fatalf("review scope-check labels = %#v, want %q", control.Labels, config.WorkflowControlPoolLabel)
-	}
-
 	submit := steps["expansion-review.submit"]
 	if submit.Assignee != mayorSession {
 		t.Fatalf("submit assignee = %q, want %q", submit.Assignee, mayorSession)
@@ -152,6 +143,7 @@ func TestDecorateDynamicFragmentRecipePreservesPoolFallbackAndScopeMetadata(t *t
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "reviewer", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 3}},
 		},
@@ -242,6 +234,7 @@ func TestDecorateDynamicFragmentRecipeUsesSourceRouteRigContextForBareTargets(t 
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "reviewer", Dir: "frontend"},
 			{Name: "reviewer", Dir: "backend"},
@@ -285,6 +278,7 @@ func TestDecorateDynamicFragmentRecipeMarksRetryEvalAsScopedControl(t *testing.T
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "reviewer", Dir: "frontend"},
 		},
@@ -344,7 +338,7 @@ func TestDecorateDynamicFragmentRecipeMarksRetryEvalAsScopedControl(t *testing.T
 
 func TestRunWorkflowServeProcessesReadyControlBeadsThenExits(t *testing.T) {
 	cityDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n\n[daemon]\ngraph_workflows = true\n"), 0o644); err != nil {
 		t.Fatalf("write city.toml: %v", err)
 	}
 	t.Setenv("GC_CITY", cityDir)
@@ -365,7 +359,7 @@ func TestRunWorkflowServeProcessesReadyControlBeadsThenExits(t *testing.T) {
 		workflowServeIdlePollAttempts = prevAttempts
 	})
 
-	wantQuery := `bd ready --label=` + config.WorkflowControlPoolLabel + ` --json --limit=20 2>/dev/null`
+	wantQuery := `bd ready --metadata-field gc.routed_to=` + config.WorkflowControlAgentName + ` --unassigned --json --limit=20 2>/dev/null`
 	var gotQueries []string
 	var gotDirs []string
 	var controlled []string
@@ -413,7 +407,7 @@ func TestRunWorkflowServeProcessesReadyControlBeadsThenExits(t *testing.T) {
 
 func TestRunWorkflowServeRetriesBrieflyAfterProcessingBeforeIdleExit(t *testing.T) {
 	cityDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n\n[daemon]\ngraph_workflows = true\n"), 0o644); err != nil {
 		t.Fatalf("write city.toml: %v", err)
 	}
 	t.Setenv("GC_CITY", cityDir)
@@ -465,7 +459,7 @@ func TestRunWorkflowServeRetriesBrieflyAfterProcessingBeforeIdleExit(t *testing.
 
 func TestRunWorkflowServeSkipsPendingControlBeadAndProcessesLaterReady(t *testing.T) {
 	cityDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n\n[daemon]\ngraph_workflows = true\n"), 0o644); err != nil {
 		t.Fatalf("write city.toml: %v", err)
 	}
 	t.Setenv("GC_CITY", cityDir)
@@ -524,7 +518,7 @@ func TestRunWorkflowServeSkipsPendingControlBeadAndProcessesLaterReady(t *testin
 
 func TestRunWorkflowServeReturnsQueryError(t *testing.T) {
 	cityDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n\n[daemon]\ngraph_workflows = true\n"), 0o644); err != nil {
 		t.Fatalf("write city.toml: %v", err)
 	}
 	t.Setenv("GC_CITY", cityDir)
@@ -594,8 +588,9 @@ func TestRunWorkflowServeFollowUsesSweepFallback(t *testing.T) {
 		return os.ErrDeadlineExceeded
 	}
 
+	wfcAgent := config.Agent{Name: "workflow-control", Pool: &config.PoolConfig{Min: 1, Max: 1}}
 	err := runWorkflowServeFollow(
-		config.Agent{Name: "workflow-control", WorkQuery: `bd ready --label=` + config.WorkflowControlPoolLabel + ` --json --limit=1 2>/dev/null`},
+		wfcAgent,
 		t.TempDir(),
 		io.Discard,
 	)
@@ -635,6 +630,7 @@ func TestDecorateDynamicFragmentRecipeSynthesizesInheritedScopeChecks(t *testing
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "reviewer"},
 		},
@@ -712,6 +708,7 @@ func TestResolveGraphStepBindingWorkflowFinalizeUsesFallback(t *testing.T) {
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "mayor"},
 			{Name: "reviewer"},
@@ -804,6 +801,7 @@ func TestResolveGraphStepBindingRetryEvalUsesDependencyRoute(t *testing.T) {
 	store := beads.NewMemStore()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
+		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
 			{Name: "reviewer"},
 			{Name: "workflow-control"},

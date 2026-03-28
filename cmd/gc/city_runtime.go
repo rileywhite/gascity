@@ -579,13 +579,11 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, desiredState map[s
 	if err != nil {
 		fmt.Fprintf(cr.stderr, "%s: listing work beads: %v\n", cr.logPrefix, err) //nolint:errcheck
 	}
-	var poolDesired map[string]int
-	if err == nil {
-		poolDesiredStates := ComputePoolDesiredStates(cr.cfg, allBeads, sessionBeads.Open())
-		poolDesired = PoolDesiredCounts(poolDesiredStates)
-	} else {
-		poolDesired = derivePoolDesired(desiredState, cr.cfg)
-	}
+	// Pool desired counts come from desiredState, which was already built
+	// with scale_check (running in the correct rig directory for each agent)
+	// + bead scanning + nested cap enforcement. No need to recompute from
+	// the city store alone — that misses rig-scoped work beads.
+	poolDesired := derivePoolDesired(desiredState, cr.cfg)
 	if err == nil && sweepUndesiredPoolSessionBeads(store, sessionBeads, desiredState, allBeads, cr.cfg, cr.sp) > 0 {
 		sessionBeads = cr.loadSessionBeadSnapshot()
 	}
@@ -688,14 +686,7 @@ func (cr *CityRuntime) workflowControlTick(ctx context.Context) {
 		sessionBeads,
 	)
 	open := filterSessionBeadsByName(updated, cfgNames)
-	allBeads, err := store.List()
-	if err != nil {
-		fmt.Fprintf(cr.stderr, "%s: listing work beads: %v\n", cr.logPrefix, err) //nolint:errcheck
-	}
 	poolDesired := derivePoolDesired(desiredState, filteredCfg)
-	if err == nil {
-		poolDesired = PoolDesiredCounts(ComputePoolDesiredStates(filteredCfg, allBeads, open))
-	}
 	workSet := computeWorkSet(filteredCfg, shellScaleCheck, cr.cityName, cr.cityPath, store, sessionBeads)
 	reconcileSessionBeads(
 		ctx,

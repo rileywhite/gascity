@@ -43,17 +43,16 @@ func workflowExecutionRoute(bead beads.Bead) string {
 	return workflowExecutionRouteFromMeta(bead.Metadata)
 }
 
-func workflowControlBinding(store beads.Store, cityName string, cfg *config.City) (graphRouteBinding, error) {
+func workflowControlBinding(store beads.Store, cityName string, cfg *config.City, rigContext string) (graphRouteBinding, error) {
 	if cfg == nil {
 		return graphRouteBinding{}, fmt.Errorf("workflow-control route requires config")
 	}
-	agentCfg, ok := resolveAgentIdentity(cfg, config.WorkflowControlAgentName, "")
+	agentCfg, ok := resolveAgentIdentity(cfg, config.WorkflowControlAgentName, rigContext)
 	if !ok {
 		return graphRouteBinding{}, fmt.Errorf("workflow-control agent %q not found", config.WorkflowControlAgentName)
 	}
 	binding := graphRouteBinding{qualifiedName: agentCfg.QualifiedName()}
 	if agentCfg.IsPool() {
-		binding.label = "pool:" + agentCfg.QualifiedName()
 		return binding, nil
 	}
 	sn := lookupSessionNameOrLegacy(store, cityName, agentCfg.QualifiedName(), cfg.Workspace.SessionTemplate)

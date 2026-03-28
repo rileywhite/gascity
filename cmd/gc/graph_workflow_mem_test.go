@@ -426,15 +426,8 @@ func TestGraphWorkflowInMemoryRouteUsesWorkflowControlForControlBeads(t *testing
 		if bead.Assignee != "" {
 			t.Fatalf("control bead %s assignee = %q, want empty", bead.ID, bead.Assignee)
 		}
-		hasControlLabel := false
-		for _, label := range bead.Labels {
-			if label == config.WorkflowControlPoolLabel {
-				hasControlLabel = true
-				break
-			}
-		}
-		if !hasControlLabel {
-			t.Fatalf("control bead %s labels = %#v, want workflow-control pool label", bead.ID, bead.Labels)
+		if bead.Metadata["gc.routed_to"] != config.WorkflowControlAgentName {
+			t.Fatalf("control bead %s gc.routed_to = %q, want %q", bead.ID, bead.Metadata["gc.routed_to"], config.WorkflowControlAgentName)
 		}
 	}
 	if !foundControl {

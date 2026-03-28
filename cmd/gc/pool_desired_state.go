@@ -47,12 +47,15 @@ func PoolDesiredCounts(states []PoolDesiredState) map[string]int {
 	return counts
 }
 
-// ComputePoolDesiredStates computes the bead-driven desired state for all pool agents.
-// Returns one PoolDesiredState per agent template.
+// ComputePoolDesiredStates computes the desired state for all pool agents.
+// Combines bead-driven resume/new requests with scale_check demand signals.
+// scaleCheckCounts maps agent template → desired count from scale_check.
+// Pass nil when scale_check results are unavailable.
 func ComputePoolDesiredStates(
 	cfg *config.City,
 	workBeads []beads.Bead,
 	sessionBeads []beads.Bead,
+	scaleCheckCounts map[string]int,
 ) []PoolDesiredState {
 	// Index open session beads by ID for fast lookup.
 	openSessionBeadIDs := make(map[string]bool)
@@ -112,6 +115,35 @@ func ComputePoolDesiredStates(
 				Tier:         "new",
 				WorkBeadID:   wb.ID,
 			})
+		}
+	}
+
+	// Merge scale_check demand: for each agent, if scale_check wants more
+	// sessions than bead-driven requests already cover, add the difference
+	// as "new" tier requests. This ensures the scale_check command (which
+	// runs in the correct rig directory) is always the authoritative demand
+	// signal, while bead-driven resume requests preserve running sessions.
+	if len(scaleCheckCounts) > 0 {
+		beadDriven := make(map[string]int, len(allRequests))
+		for _, r := range allRequests {
+			beadDriven[r.Template]++
+		}
+		for _, agent := range cfg.Agents {
+			if agent.Suspended {
+				continue
+			}
+			template := agent.QualifiedName()
+			scaleCount, ok := scaleCheckCounts[template]
+			if !ok {
+				continue
+			}
+			deficit := scaleCount - beadDriven[template]
+			for j := 0; j < deficit; j++ {
+				allRequests = append(allRequests, SessionRequest{
+					Template: template,
+					Tier:     "new",
+				})
+			}
 		}
 	}
 

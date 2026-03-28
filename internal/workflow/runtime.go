@@ -451,7 +451,7 @@ func isLogicalDescendant(logical, candidate beads.Bead) bool {
 	if candidate.Metadata["gc.logical_bead_id"] == logical.ID {
 		return true
 	}
-	for _, prefix := range []string{".run.", ".eval.", ".check.", ".iteration."} {
+	for _, prefix := range []string{".run.", ".eval.", ".check.", ".iteration.", ".attempt."} {
 		if strings.HasPrefix(candidate.ID, logical.ID+prefix) {
 			return true
 		}
@@ -467,7 +467,7 @@ func isLogicalDescendant(logical, candidate beads.Bead) bool {
 	if candidateRef == "" {
 		candidateRef = strings.TrimSpace(candidate.Ref)
 	}
-	for _, prefix := range []string{".run.", ".eval.", ".check.", ".iteration."} {
+	for _, prefix := range []string{".run.", ".eval.", ".check.", ".iteration.", ".attempt."} {
 		if strings.HasPrefix(candidateRef, logicalRef+prefix) {
 			return true
 		}

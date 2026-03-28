@@ -650,7 +650,7 @@ func stepToBead(step formula.RecipeStep, vars map[string]string, priorityOverrid
 		Type:        stepType,
 		Priority:    resolveStepPriority(step, priorityOverride),
 		Labels:      step.Labels,
-		Assignee:    step.Assignee,
+		Assignee:    formula.Substitute(step.Assignee, vars),
 	}
 
 	// Merge step metadata + notes into bead metadata.

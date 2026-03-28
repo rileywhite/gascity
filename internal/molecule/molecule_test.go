@@ -631,6 +631,37 @@ func TestInstantiateVarDefaults(t *testing.T) {
 	}
 }
 
+func TestInstantiateSubstitutesAssigneeVars(t *testing.T) {
+	store := beads.NewMemStore()
+	defaultTarget := "codex"
+	recipe := &formula.Recipe{
+		Name: "assignee-vars",
+		Steps: []formula.RecipeStep{
+			{ID: "assignee-vars", Title: "Root", Type: "epic", IsRoot: true},
+			{ID: "assignee-vars.step", Title: "Assigned", Type: "task", Assignee: "{{target}}"},
+		},
+		Deps: []formula.RecipeDep{
+			{StepID: "assignee-vars.step", DependsOnID: "assignee-vars", Type: "parent-child"},
+		},
+		Vars: map[string]*formula.VarDef{
+			"target": {Description: "Target", Default: &defaultTarget},
+		},
+	}
+
+	result, err := Instantiate(context.Background(), store, recipe, Options{})
+	if err != nil {
+		t.Fatalf("Instantiate: %v", err)
+	}
+
+	step, err := store.Get(result.IDMapping["assignee-vars.step"])
+	if err != nil {
+		t.Fatalf("get step: %v", err)
+	}
+	if step.Assignee != "codex" {
+		t.Fatalf("step.Assignee = %q, want codex", step.Assignee)
+	}
+}
+
 func TestInstantiateNilRecipe(t *testing.T) {
 	store := beads.NewMemStore()
 	_, err := Instantiate(context.Background(), store, nil, Options{})

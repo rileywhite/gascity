@@ -582,14 +582,7 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 
 	open := sessionBeads.Open()
 	dt := newDrainTracker()
-	allBeads, listErr := oneShotStore.List()
-	if listErr != nil {
-		fmt.Fprintf(stderr, "gc start: listing work beads: %v\n", listErr) //nolint:errcheck
-	}
 	poolDesired := derivePoolDesired(ds, cfg)
-	if listErr == nil {
-		poolDesired = PoolDesiredCounts(ComputePoolDesiredStates(cfg, allBeads, open))
-	}
 	reconcileSessionBeads(
 		sigCtx, open, ds, cfgNames, cfg, sp, oneShotStore,
 		nil, nil, nil, dt, poolDesired, cityName,

@@ -1088,7 +1088,7 @@ func instantiateSlingFormula(ctx context.Context, formulaName string, searchPath
 				return nil, fmt.Errorf("could not resolve session name for %q", a.QualifiedName())
 			}
 		}
-		if err := decorateGraphWorkflowRecipe(recipe, sourceBeadID, scopeKind, scopeRef, deps.StoreRef, a.QualifiedName(), sessionName, deps.Store, deps.CityName, deps.Cfg); err != nil {
+		if err := decorateGraphWorkflowRecipe(recipe, graphWorkflowRouteVars(recipe, opts.Vars), sourceBeadID, scopeKind, scopeRef, deps.StoreRef, a.QualifiedName(), sessionName, deps.Store, deps.CityName, deps.Cfg); err != nil {
 			slingTracef("instantiate decorate-error formula=%s err=%v", formulaName, err)
 			return nil, err
 		}
@@ -1103,6 +1103,19 @@ func instantiateSlingFormula(ctx context.Context, formulaName string, searchPath
 	return result, nil
 }
 
+func graphWorkflowRouteVars(recipe *formula.Recipe, provided map[string]string) map[string]string {
+	routeVars := make(map[string]string, len(provided))
+	if recipe != nil {
+		for name, def := range recipe.Vars {
+			if def != nil && def.Default != nil {
+				routeVars[name] = *def.Default
+			}
+		}
+	}
+	maps.Copy(routeVars, provided)
+	return routeVars
+}
+
 func isCompiledGraphWorkflow(recipe *formula.Recipe) bool {
 	if recipe == nil || len(recipe.Steps) == 0 {
 		return false
@@ -1111,7 +1124,7 @@ func isCompiledGraphWorkflow(recipe *formula.Recipe) bool {
 	return root.Metadata["gc.kind"] == "workflow" && root.Metadata["gc.formula_contract"] == "graph.v2"
 }
 
-func decorateGraphWorkflowRecipe(recipe *formula.Recipe, sourceBeadID, scopeKind, scopeRef, rootStoreRef, routedTo, sessionName string, store beads.Store, cityName string, cfg *config.City) error {
+func decorateGraphWorkflowRecipe(recipe *formula.Recipe, routeVars map[string]string, sourceBeadID, scopeKind, scopeRef, rootStoreRef, routedTo, sessionName string, store beads.Store, cityName string, cfg *config.City) error {
 	if recipe == nil {
 		return fmt.Errorf("workflow recipe is nil")
 	}
@@ -1121,11 +1134,11 @@ func decorateGraphWorkflowRecipe(recipe *formula.Recipe, sourceBeadID, scopeKind
 	} else {
 		defaultRoute.label = "pool:" + routedTo
 	}
-	controlRoute, err := workflowControlBinding(store, cityName, cfg)
+	routingRigContext := graphRouteRigContext(defaultRoute.qualifiedName)
+	controlRoute, err := workflowControlBinding(store, cityName, cfg, routingRigContext)
 	if err != nil {
 		return err
 	}
-	routingRigContext := graphRouteRigContext(defaultRoute.qualifiedName)
 	stepByID := make(map[string]*formula.RecipeStep, len(recipe.Steps))
 	stepAlias := make(map[string]string, len(recipe.Steps))
 	for i := range recipe.Steps {
@@ -1170,7 +1183,7 @@ func decorateGraphWorkflowRecipe(recipe *formula.Recipe, sourceBeadID, scopeKind
 		case "workflow", "scope":
 			continue
 		}
-		binding, err := resolveGraphStepBinding(step.ID, stepByID, stepAlias, depsByStep, bindingCache, resolving, defaultRoute, routingRigContext, store, cityName, cfg)
+		binding, err := resolveGraphStepBindingWithVars(step.ID, stepByID, stepAlias, depsByStep, bindingCache, resolving, routeVars, defaultRoute, routingRigContext, store, cityName, cfg)
 		if err != nil {
 			return err
 		}
@@ -1215,6 +1228,10 @@ type graphRouteBinding struct {
 }
 
 func resolveGraphStepBinding(stepID string, stepByID map[string]*formula.RecipeStep, stepAlias map[string]string, depsByStep map[string][]string, cache map[string]graphRouteBinding, resolving map[string]bool, fallback graphRouteBinding, rigContext string, store beads.Store, cityName string, cfg *config.City) (graphRouteBinding, error) {
+	return resolveGraphStepBindingWithVars(stepID, stepByID, stepAlias, depsByStep, cache, resolving, nil, fallback, rigContext, store, cityName, cfg)
+}
+
+func resolveGraphStepBindingWithVars(stepID string, stepByID map[string]*formula.RecipeStep, stepAlias map[string]string, depsByStep map[string][]string, cache map[string]graphRouteBinding, resolving map[string]bool, routeVars map[string]string, fallback graphRouteBinding, rigContext string, store beads.Store, cityName string, cfg *config.City) (graphRouteBinding, error) {
 	if aliased, ok := stepAlias[stepID]; ok {
 		stepID = aliased
 	}
@@ -1231,16 +1248,13 @@ func resolveGraphStepBinding(stepID string, stepByID map[string]*formula.RecipeS
 	resolving[stepID] = true
 	defer delete(resolving, stepID)
 
-	target := strings.TrimSpace(step.Assignee)
-	if target == "" {
-		target = strings.TrimSpace(step.Metadata["gc.run_target"])
-	}
+	target := graphStepRouteTarget(step, routeVars)
 	if target == "" {
 		switch step.Metadata["gc.kind"] {
 		case "scope-check":
 			target = strings.TrimSpace(step.Metadata["gc.control_for"])
 			if target != "" {
-				binding, err := resolveGraphStepBinding(target, stepByID, stepAlias, depsByStep, cache, resolving, fallback, rigContext, store, cityName, cfg)
+				binding, err := resolveGraphStepBindingWithVars(target, stepByID, stepAlias, depsByStep, cache, resolving, routeVars, fallback, rigContext, store, cityName, cfg)
 				if err != nil {
 					return graphRouteBinding{}, err
 				}
@@ -1250,7 +1264,7 @@ func resolveGraphStepBinding(stepID string, stepByID map[string]*formula.RecipeS
 		case "fanout":
 			target = strings.TrimSpace(step.Metadata["gc.control_for"])
 			if target != "" {
-				binding, err := resolveGraphStepBinding(target, stepByID, stepAlias, depsByStep, cache, resolving, fallback, rigContext, store, cityName, cfg)
+				binding, err := resolveGraphStepBindingWithVars(target, stepByID, stepAlias, depsByStep, cache, resolving, routeVars, fallback, rigContext, store, cityName, cfg)
 				if err != nil {
 					return graphRouteBinding{}, err
 				}
@@ -1279,7 +1293,7 @@ func resolveGraphStepBinding(stepID string, stepByID map[string]*formula.RecipeS
 				subjectID = depsByStep[step.ID][0]
 			}
 			if subjectID != "" {
-				binding, err := resolveGraphStepBinding(subjectID, stepByID, stepAlias, depsByStep, cache, resolving, fallback, rigContext, store, cityName, cfg)
+				binding, err := resolveGraphStepBindingWithVars(subjectID, stepByID, stepAlias, depsByStep, cache, resolving, routeVars, fallback, rigContext, store, cityName, cfg)
 				if err != nil {
 					return graphRouteBinding{}, err
 				}
@@ -1293,7 +1307,7 @@ func resolveGraphStepBinding(stepID string, stepByID map[string]*formula.RecipeS
 				if depID == "" {
 					continue
 				}
-				binding, err := resolveGraphStepBinding(depID, stepByID, stepAlias, depsByStep, cache, resolving, fallback, rigContext, store, cityName, cfg)
+				binding, err := resolveGraphStepBindingWithVars(depID, stepByID, stepAlias, depsByStep, cache, resolving, routeVars, fallback, rigContext, store, cityName, cfg)
 				if err != nil {
 					return graphRouteBinding{}, err
 				}
@@ -1335,6 +1349,20 @@ func resolveGraphStepBinding(stepID string, stepByID map[string]*formula.RecipeS
 	binding.sessionName = sn
 	cache[stepID] = binding
 	return binding, nil
+}
+
+func graphStepRouteTarget(step *formula.RecipeStep, routeVars map[string]string) string {
+	if step == nil {
+		return ""
+	}
+	target := strings.TrimSpace(formula.Substitute(step.Assignee, routeVars))
+	if target != "" {
+		return target
+	}
+	if step.Metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(formula.Substitute(step.Metadata["gc.run_target"], routeVars))
 }
 
 func graphRouteRigContext(route string) string {

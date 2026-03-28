@@ -58,6 +58,22 @@ func evaluatePendingPools(
 	return counts
 }
 
+// evaluatePendingPoolsMap is like evaluatePendingPools but returns a map
+// from agent qualified name → desired count. Used to feed scale_check
+// results into ComputePoolDesiredStates.
+func evaluatePendingPoolsMap(
+	cfg *config.City,
+	pendingPools []poolEvalWork,
+	stderr io.Writer,
+) map[string]int {
+	counts := evaluatePendingPools(cfg, pendingPools, stderr)
+	m := make(map[string]int, len(counts))
+	for j, pw := range pendingPools {
+		m[cfg.Agents[pw.agentIdx].QualifiedName()] = counts[j]
+	}
+	return m
+}
+
 // buildDesiredState computes the desired session state from config,
 // returning sessionName → TemplateParams. This is the canonical path
 // for constructing the desired agent set — both reconcilers use it.
@@ -157,10 +173,14 @@ func buildDesiredStateWithSessionBeads(
 		pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, pool: pool, poolDir: poolDir})
 	}
 
+	// Always run scale_check — it executes in the correct directory for
+	// each agent (rig or city) and is the authoritative demand signal.
+	scaleCheckCounts := evaluatePendingPoolsMap(cfg, pendingPools, stderr)
+
 	if store != nil {
 		allBeads, err := store.List()
 		if err == nil {
-			poolDesiredStates := ComputePoolDesiredStates(cfg, allBeads, sessionBeads.Open())
+			poolDesiredStates := ComputePoolDesiredStates(cfg, allBeads, sessionBeads.Open(), scaleCheckCounts)
 			for _, poolState := range poolDesiredStates {
 				cfgAgent := findAgentByTemplate(cfg, poolState.Template)
 				if cfgAgent == nil {
@@ -173,16 +193,15 @@ func buildDesiredStateWithSessionBeads(
 			}
 		} else {
 			fmt.Fprintf(stderr, "buildDesiredState: listing work beads: %v\n", err) //nolint:errcheck
-			desiredCounts := evaluatePendingPools(cfg, pendingPools, stderr)
-			for j, pw := range pendingPools {
-				desiredCount := desiredCounts[j]
-				if desiredCount <= 0 {
+			// Store failed — fall back to scale_check-only counts.
+			poolDesiredStates := ComputePoolDesiredStates(cfg, nil, nil, scaleCheckCounts)
+			for _, poolState := range poolDesiredStates {
+				cfgAgent := findAgentByTemplate(cfg, poolState.Template)
+				if cfgAgent == nil {
 					continue
 				}
-				cfgAgent := &cfg.Agents[pw.agentIdx]
-				poolState := PoolDesiredState{
-					Template: cfgAgent.QualifiedName(),
-					Requests: make([]SessionRequest, desiredCount),
+				if agentInSuspendedRig(cityPath, cfgAgent, cfg.Rigs, suspendedRigPaths) {
+					continue
 				}
 				realizePoolDesiredSessions(bp, cfgAgent, poolState, desired, stderr)
 			}
@@ -229,6 +248,8 @@ func workflowControlOnlyConfig(cfg *config.City) *config.City {
 	if cfg == nil {
 		return nil
 	}
+	// Only include city-scoped workflow-control. Rig-scoped instances are
+	// handled by the main reconcile loop which has per-rig stores.
 	agentCfg, ok := resolveAgentIdentity(cfg, config.WorkflowControlAgentName, "")
 	if !ok {
 		return nil
