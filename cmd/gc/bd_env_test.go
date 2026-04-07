@@ -42,6 +42,9 @@ func TestBdRuntimeEnvIncludesDoltHost(t *testing.T) {
 	if got := env["BEADS_DOLT_PASSWORD"]; got != "s3cret" {
 		t.Errorf("BEADS_DOLT_PASSWORD = %q, want %q", got, "s3cret")
 	}
+	if got := env["BEADS_DOLT_AUTO_START"]; got != "0" {
+		t.Errorf("BEADS_DOLT_AUTO_START = %q, want %q", got, "0")
+	}
 }
 
 func TestBdRuntimeEnvExternalHostSkipsLocalState(t *testing.T) {
@@ -543,4 +546,36 @@ func TestBdRuntimeEnvForRigPrefersExplicitRigDoltConfigOverManagedCity(t *testin
 	if got := env["GC_RIG_ROOT"]; got != rigDir {
 		t.Fatalf("GC_RIG_ROOT = %q, want %q", got, rigDir)
 	}
+}
+
+func TestDoltAutoStartSuppressedInAllEnvPaths(t *testing.T) {
+	t.Setenv("GC_BEADS", "bd")
+	t.Setenv("GC_DOLT", "skip")
+
+	cityPath := t.TempDir()
+
+	t.Run("bdRuntimeEnv", func(t *testing.T) {
+		env := bdRuntimeEnv(cityPath)
+		if got := env["BEADS_DOLT_AUTO_START"]; got != "0" {
+			t.Errorf("BEADS_DOLT_AUTO_START = %q, want %q", got, "0")
+		}
+	})
+
+	t.Run("bdRuntimeEnvForRig", func(t *testing.T) {
+		rigDir := filepath.Join(t.TempDir(), "rig")
+		if err := os.MkdirAll(rigDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		env := bdRuntimeEnvForRig(cityPath, &config.City{}, rigDir)
+		if got := env["BEADS_DOLT_AUTO_START"]; got != "0" {
+			t.Errorf("BEADS_DOLT_AUTO_START = %q, want %q", got, "0")
+		}
+	})
+
+	t.Run("sessionDoltEnv", func(t *testing.T) {
+		env := sessionDoltEnv(cityPath, "", nil)
+		if got := env["BEADS_DOLT_AUTO_START"]; got != "0" {
+			t.Errorf("BEADS_DOLT_AUTO_START = %q, want %q", got, "0")
+		}
+	})
 }

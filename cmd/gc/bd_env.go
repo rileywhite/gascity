@@ -90,6 +90,11 @@ func bdRuntimeEnv(cityPath string) map[string]string {
 	env["BEADS_DIR"] = filepath.Join(cityPath, ".beads")
 	env["GC_RIG"] = ""
 	env["GC_RIG_ROOT"] = ""
+	// Suppress bd's built-in Dolt auto-start. The gc controller manages the
+	// Dolt server lifecycle via gc-beads-bd; bd's CLI auto-start ignores the
+	// dolt.auto-start:false config (beads resolveAutoStart priority bug) and
+	// starts rogue servers from the agent's cwd with the wrong data_dir.
+	env["BEADS_DOLT_AUTO_START"] = "0"
 	if rawBeadsProvider(cityPath) != "bd" {
 		return env
 	}

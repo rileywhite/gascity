@@ -313,6 +313,10 @@ func sessionDoltEnv(cityPath, rigRoot string, rigs []config.Rig) map[string]stri
 		"BEADS_DOLT_SERVER_PORT": "",
 		"BEADS_DOLT_SERVER_USER": "",
 		"BEADS_DOLT_PASSWORD":    "",
+		// Suppress bd's built-in Dolt auto-start. The gc controller manages
+		// the server; bd's CLI auto-start launches rogue servers from the
+		// agent's cwd with the wrong data_dir.
+		"BEADS_DOLT_AUTO_START": "0",
 	}
 
 	if host := doltHostForCity(cityPath); host != "" {
