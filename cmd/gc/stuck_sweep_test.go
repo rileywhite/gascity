@@ -60,11 +60,12 @@ func newStuckSweepRuntime(t *testing.T, daemon config.DaemonConfig, runner beads
 // enabledDaemon returns a DaemonConfig with the stuck sweep enabled and
 // a single pattern so StuckSweepEnabled() reports true.
 func enabledDaemon() config.DaemonConfig {
+	peekLines := 50
 	return config.DaemonConfig{
 		StuckSweep:         true,
 		StuckErrorPatterns: []string{`(?i)rate limit`},
 		StuckWispThreshold: "10m",
-		StuckPeekLines:     50,
+		StuckPeekLines:     &peekLines,
 		StuckWarrantLabel:  "pool:dog",
 	}
 }

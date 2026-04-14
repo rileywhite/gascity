@@ -1005,8 +1005,9 @@ type DaemonConfig struct {
 	// strings); example patterns live in the gastown pack.
 	StuckErrorPatterns []string `toml:"stuck_error_patterns,omitempty"`
 	// StuckPeekLines is the number of lines of pane scrollback to inspect
-	// per session during the sweep. Clamped to [1, 2000]. Defaults to 50.
-	StuckPeekLines int `toml:"stuck_peek_lines,omitempty" jsonschema:"default=50"`
+	// per session during the sweep. Clamped to [1, 2000]. Nil or zero
+	// defaults to 50.
+	StuckPeekLines *int `toml:"stuck_peek_lines,omitempty" jsonschema:"default=50"`
 	// StuckWarrantLabel is the beads label applied to warrants filed by
 	// the sweep. Configurable so downstream formulas can route warrants
 	// without hardcoding a specific pool name. Defaults to "pool:dog".
@@ -1155,15 +1156,15 @@ func (d *DaemonConfig) StuckWispThresholdDuration() time.Duration {
 }
 
 // StuckPeekLinesOrDefault returns the sweep peek-lines setting, clamped
-// to [1, maxStuckPeekLines]. Zero or negative values return the default.
+// to [1, maxStuckPeekLines]. Nil, zero, or negative values return the default.
 func (d *DaemonConfig) StuckPeekLinesOrDefault() int {
-	if d.StuckPeekLines <= 0 {
+	if d.StuckPeekLines == nil || *d.StuckPeekLines <= 0 {
 		return DefaultStuckPeekLines
 	}
-	if d.StuckPeekLines > maxStuckPeekLines {
+	if *d.StuckPeekLines > maxStuckPeekLines {
 		return maxStuckPeekLines
 	}
-	return d.StuckPeekLines
+	return *d.StuckPeekLines
 }
 
 // StuckWarrantLabelOrDefault returns the configured warrant label, or

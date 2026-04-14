@@ -13,11 +13,12 @@ import (
 // tracker tests for readable call-sites.
 func doStuckTracker(t *testing.T, patterns []string) stuckTracker {
 	t.Helper()
+	peekLines := 50
 	d := config.DaemonConfig{
 		StuckSweep:         true,
 		StuckWispThreshold: (10 * time.Minute).String(),
 		StuckErrorPatterns: patterns,
-		StuckPeekLines:     50,
+		StuckPeekLines:     &peekLines,
 		StuckWarrantLabel:  "pool:dog",
 	}
 	tr, err := newStuckTracker(d)
@@ -226,7 +227,7 @@ func TestStuckTracker_PeekLinesAndLabelAccessors(t *testing.T) {
 	d := config.DaemonConfig{
 		StuckSweep:         true,
 		StuckErrorPatterns: []string{`x`},
-		StuckPeekLines:     0, // should clamp to default
+		StuckPeekLines:     nil, // nil → default
 	}
 	tr, err := newStuckTracker(d)
 	if err != nil {
