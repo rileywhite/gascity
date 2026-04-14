@@ -353,6 +353,8 @@ skip = ["noisy-order"] # order names to exclude from dispatch
 max_timeout = "120s"        # hard cap on per-order timeout (default: uncapped)
 ```
 
+Run `gc doctor daemon-stuck-sweep` to inspect the effective stuck-sweep configuration.
+
 Per-agent idle timeout is configured on individual `[[agent]]` entries:
 
 ```toml

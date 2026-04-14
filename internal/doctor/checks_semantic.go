@@ -266,7 +266,8 @@ func (c *StuckSweepCheck) Run(_ *CheckContext) *CheckResult {
 	}
 	if !d.StuckSweepEnabled() {
 		r.Status = StatusWarning
-		r.Message = "stuck sweep misconfigured: stuck_sweep=true but sweep cannot run (check stuck_warrant_label)"
+		r.Message = "stuck sweep misconfigured: stuck_warrant_label is empty"
+		r.FixHint = "Set stuck_warrant_label in [daemon] config to enable the stuck-agent sweep"
 		return r
 	}
 	patterns := len(d.StuckErrorPatterns)

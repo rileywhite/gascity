@@ -25,10 +25,11 @@ func (cr *CityRuntime) runStuckSweep(ctx context.Context, now time.Time) {
 	if cr == nil || cr.stuck == nil {
 		return
 	}
-	// Nil-guard for the noop tracker: a noopStuckTracker always returns
-	// false, so the sweep is byte-identical to disabled when patterns
-	// and label are empty. We still short-circuit here to avoid the bd
-	// shellout when the sweep is disabled.
+	// Short-circuit when stuck_sweep=false or stuck_warrant_label resolves
+	// empty: StuckSweepEnabled() covers both cases. The noop tracker path
+	// (noopStuckTracker) is never reached in M3 — the sweep is gated here
+	// before any bd shellout. Zero patterns no longer results in noop;
+	// the progress-mismatch axis remains active when patterns are absent.
 	if !cr.cfg.Daemon.StuckSweepEnabled() {
 		return
 	}
@@ -155,8 +156,10 @@ func (cr *CityRuntime) runStuckSweep(ctx context.Context, now time.Time) {
 				Message: reason,
 			})
 		}
-		// Low-cardinality axis attribute: regex when a pattern fired,
-		// progress_mismatch otherwise. Full reason lives on the warrant bead.
+		// axis is a low-cardinality summary: "regex" or "progress_mismatch".
+		// The session attribute is intentionally included (consistent with
+		// RecordAgentIdleKill) and may have high cardinality in large fleets —
+		// operators should be aware. Full reason lives on the warrant bead.
 		axis := "regex"
 		if matchedPattern == "" {
 			axis = "progress_mismatch"
@@ -180,7 +183,7 @@ func hasOpenStuckWarrant(store beads.Store, label, session string) (bool, error)
 		return true, err
 	}
 	for _, b := range beadsList {
-		if b.Type != "" && b.Type != "warrant" {
+		if b.Type != "warrant" {
 			continue
 		}
 		if strings.TrimSpace(b.Metadata["target"]) == session {

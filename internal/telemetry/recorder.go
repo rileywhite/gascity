@@ -279,8 +279,9 @@ func RecordAgentIdleKill(ctx context.Context, agentName string) {
 
 // RecordAgentStuckWarrant records a stuck-agent warrant bead being filed (metrics + log event).
 // axis is one of "regex" or "progress_mismatch" — a low-cardinality summary of which axis fired.
-// The full warrant reason is captured on the warrant bead itself; we keep this attribute
-// low-cardinality to avoid per-tick metric explosion.
+// The session attribute is intentionally included (consistent with RecordAgentIdleKill) and
+// may have high cardinality in large fleets — operators should be aware. The full warrant reason
+// is captured on the warrant bead itself.
 func RecordAgentStuckWarrant(ctx context.Context, session, axis string) {
 	initInstruments()
 	inst.agentStuckWarrantTotal.Add(ctx, 1,
