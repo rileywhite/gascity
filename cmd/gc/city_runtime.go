@@ -39,12 +39,14 @@ type CityRuntime struct {
 	buildFn                 func(*config.City, runtime.Provider, beads.Store) DesiredStateResult
 	buildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, map[string]beads.Store, *sessionBeadSnapshot, *sessionReconcilerTraceCycle) DesiredStateResult
 
-	dops  drainOps
-	ct    crashTracker
-	it    idleTracker
-	wg    wispGC
-	od    orderDispatcher
-	trace *sessionReconcilerTraceManager
+	dops   drainOps
+	ct     crashTracker
+	it     idleTracker
+	wg     wispGC
+	stuck  stuckTracker
+	od     orderDispatcher
+	runner beads.CommandRunner
+	trace  *sessionReconcilerTraceManager
 
 	rec events.Recorder
 	cs  *controllerState // nil when controller-managed bead stores are unavailable
@@ -126,6 +128,24 @@ func newCityRuntime(p CityRuntimeParams) *CityRuntime {
 			p.Cfg.Daemon.WispTTLDuration(), bdCommandRunnerForCity(p.CityPath))
 	}
 
+	stuck, stuckErr := newStuckTracker(p.Cfg.Daemon)
+	if stuckErr != nil {
+		fmt.Fprintf(p.Stderr, "%s: stuck sweep disabled: %v\n", //nolint:errcheck // best-effort stderr
+			firstNonEmpty(p.LogPrefix, "gc start"), stuckErr)
+		stuck = noopStuckTracker{}
+	}
+	if p.Cfg.Daemon.StuckSweepEnabled() && stuckErr == nil {
+		if m, ok := stuck.(*memoryStuckTracker); ok {
+			fmt.Fprintf(p.Stderr, //nolint:errcheck // best-effort stderr
+				"%s: stuck_sweep enabled: threshold=%s patterns=%d peek_lines=%d label=%s\n",
+				firstNonEmpty(p.LogPrefix, "gc start"),
+				m.wispThresholdDuration(), len(m.patterns),
+				m.peekLinesOrDefault(), m.warrantLabelOrDefault())
+		}
+	}
+
+	runner := bdCommandRunnerForCity(p.CityPath)
+
 	// Clear stale halt file from a previous session so a service restart
 	// always begins in the running state. An operator who wants the halt
 	// to survive a restart can re-issue "gc halt" after startup.
@@ -171,7 +191,9 @@ func newCityRuntime(p CityRuntimeParams) *CityRuntime {
 		ct:                      ct,
 		it:                      it,
 		wg:                      wg,
+		stuck:                   stuck,
 		od:                      od,
+		runner:                  runner,
 		trace:                   newSessionReconcilerTraceManager(p.CityPath, p.CityName, p.Stderr),
 		rec:                     p.Rec,
 		poolSessions:            p.PoolSessions,
@@ -485,6 +507,14 @@ func (cr *CityRuntime) tick(
 		return
 	}
 
+	// Stuck-agent sweep: controller-level non-LLM liveness check. Runs
+	// inside the halt gate (already gated above) and after wispGC so it
+	// sees freshly-GC'd wisp state.
+	cr.runStuckSweep(ctx, time.Now())
+	if ctx.Err() != nil {
+		return
+	}
+
 	// Order dispatch.
 	if cr.od != nil {
 		cr.od.dispatch(ctx, cityRoot, time.Now())
@@ -660,6 +690,14 @@ func (cr *CityRuntime) reloadConfigTraced(
 	} else {
 		cr.wg = nil
 	}
+
+	if nextStuck, err := newStuckTracker(nextCfg.Daemon); err != nil {
+		fmt.Fprintf(cr.stderr, "%s: stuck sweep disabled on reload: %v\n", cr.logPrefix, err) //nolint:errcheck // best-effort stderr
+		cr.stuck = noopStuckTracker{}
+	} else {
+		cr.stuck = nextStuck
+	}
+	cr.runner = bdCommandRunnerForCity(cityRoot)
 
 	cr.od = buildOrderDispatcher(cityRoot, nextCfg, bdCommandRunnerForCity(cityRoot), cr.rec, cr.stderr)
 

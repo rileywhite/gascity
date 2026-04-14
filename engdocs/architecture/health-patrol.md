@@ -3,7 +3,7 @@ title: "Health Patrol"
 ---
 
 
-> Last verified against code: 2026-03-18
+> Last verified against code: 2026-04-14
 
 ## Summary
 
@@ -86,6 +86,11 @@ use):
                      │                 ▼                   │
                      │  ┌─────────────────────────────┐   │
                      │  │ wispGC.runGC()              │   │
+                     │  └──────────────┬──────────────┘   │
+                     │                 ▼                   │
+                     │  ┌─────────────────────────────┐   │
+                     │  │ runStuckSweep()              │   │
+                     │  │  (stuckTracker + warrants)   │   │
                      │  └──────────────┬──────────────┘   │
                      │                 ▼                   │
                      │  ┌─────────────────────────────┐   │
@@ -176,6 +181,15 @@ waves with bounded parallelism.
   inactivity detection. Production impl `memoryIdleTracker` queries
   `runtime.Provider.GetLastActivity()` and compares against per-agent
   timeout durations.
+
+- **`stuckTracker`** (`cmd/gc/stuck_tracker.go`): Pure predicate for
+  cognition-independent wedge detection. Production impl
+  `memoryStuckTracker` composes stale-wisp with pattern-match and
+  progress-mismatch signals to classify a session as stuck without
+  LLM involvement. The CityRuntime wrapper (`runStuckSweep()`) collects
+  inputs via `runtime.Provider.Peek`, `runtime.Provider.GetLastActivity`,
+  and `sweepWispFreshness()` (bd list --json), files warrant beads on
+  detection, and emits `agent.stuck` events only on successful Create.
 
 - **`reconcileOps`** (`cmd/gc/reconcile.go`): Interface for
   session-level operations needed by reconciliation: `listRunning()`,
@@ -288,6 +302,9 @@ All Health Patrol implementation lives in `cmd/gc/`:
 | `cmd/gc/reconcile.go` | `reconcileOps` interface, `doReconcileAgents()` (4-state reconciliation + parallel starts + orphan cleanup), `doStopOrphans()` |
 | `cmd/gc/crash_tracker.go` | `crashTracker` interface, `memoryCrashTracker` (in-memory restart history with sliding window pruning) |
 | `cmd/gc/idle_tracker.go` | `idleTracker` interface, `memoryIdleTracker` (per-agent timeout + GetLastActivity query) |
+| `cmd/gc/stuck_tracker.go` | `stuckTracker` interface, `memoryStuckTracker` (pure convergent-evidence predicate) |
+| `cmd/gc/stuck_sweep.go` | `CityRuntime.runStuckSweep()` — tick wrapper, warrant filing, idempotence |
+| `cmd/gc/wisp_freshness.go` | `wispFreshness` opaque snapshot, `sweepWispFreshness()` bd-list parser |
 | `cmd/gc/order_dispatch.go` | `orderDispatcher` interface, `memoryOrderDispatcher` (gate evaluation, exec dispatch, wisp dispatch, tracking bead lifecycle) |
 | `internal/config/config.go` | `DaemonConfig` struct with `PatrolIntervalDuration()`, `MaxRestartsOrDefault()`, `RestartWindowDuration()`, `ShutdownTimeoutDuration()` |
 | `internal/config/revision.go` | `Revision()` (SHA-256 bundle hash of all config sources + pack dirs), `WatchDirs()` |
@@ -308,6 +325,11 @@ restart_window = "1h"       # sliding window for restart counting (default: 1h)
 shutdown_timeout = "5s"     # grace period before force-kill on shutdown (default: 5s)
 wisp_gc_interval = "5m"     # how often to purge expired wisps (disabled if unset)
 wisp_ttl = "24h"            # how long closed wisps survive (disabled if unset)
+stuck_sweep           = false        # opt-in controller-level stuck detection
+stuck_wisp_threshold  = "10m"        # wisp staleness threshold (default 10m)
+stuck_error_patterns  = []           # Go regexp sources; empty disables pattern axis
+stuck_peek_lines      = 50           # pane lines inspected (clamped [1,2000])
+stuck_warrant_label   = "pool:dog"   # label applied to warrant beads
 
 [orders]
 skip = ["noisy-order"] # order names to exclude from dispatch
@@ -339,6 +361,23 @@ stubbed `ExecRunner`) with no external infrastructure dependencies. See
 `TESTING.md` for the overall testing philosophy and tier boundaries.
 
 ## Known Limitations
+
+- **Stuck sweep reads `updated_at` via `bd list --json`**: `beads.Bead`
+  has no `UpdatedAt` field. The CityRuntime wrapper
+  (`sweepWispFreshness()`) parses the raw `bd list --json` `updated_at`
+  once per sweep and builds an opaque `wispFreshness` struct private to
+  `cmd/gc`. This is an intentional pragmatic workaround pending a
+  broader Provider review (rule-of-three not met; we only need
+  `updated_at` here). Raw bd JSON types do not leak past the tracker
+  boundary.
+
+- **Multi-wisp tiebreaker**: When multiple open wisps map to a single
+  session (legal during handoff), `sweepWispFreshness()` picks the
+  most-recent `updated_at` as the session's freshness source.
+
+- **`agent.stuck` emitted only on successful warrant Create**: If
+  `store.Create` errors the event is not recorded; idempotence remains
+  intact because no warrant exists to suppress, so the next tick retries.
 
 - **No cascading restarts**: Erlang/OTP supports `one_for_all` and
   `rest_for_one` restart strategies. Gas City currently implements only
