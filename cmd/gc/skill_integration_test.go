@@ -21,14 +21,15 @@ func TestIsStage2EligibleSession(t *testing.T) {
 	}{
 		{"default empty → tmux (eligible)", "", "", true},
 		{"tmux eligible", "tmux", "", true},
-		{"subprocess eligible", "subprocess", "", true},
+		// subprocess runtime does not execute PreStart in v0.15.1 —
+		// ineligible per Phase 3 pass-1 review.
+		{"subprocess ineligible (no PreStart execution)", "subprocess", "", false},
 		{"k8s ineligible", "k8s", "", false},
 		{"acp city ineligible", "acp", "", false},
 		{"hybrid ineligible", "hybrid", "", false},
 		{"exec prefix ineligible", "exec:./run.sh", "", false},
 		{"fake ineligible", "fake", "", false},
 		{"tmux + acp agent → ineligible", "tmux", "acp", false},
-		{"subprocess + acp agent → ineligible", "subprocess", "acp", false},
 	}
 	for _, c := range cases {
 		c := c
@@ -85,16 +86,13 @@ func TestEffectiveSkillsForAgentFourBranches(t *testing.T) {
 		OwnedRoots: []string{filepath.Dir(sharedSkill)},
 	}
 
-	// Branch 1: eligible + WorkDir == scope root (shared catalog drives).
+	// Branch 1: eligible + shared catalog.
 	t.Run("claude eligible shared catalog", func(t *testing.T) {
 		t.Parallel()
 		a := &config.Agent{Provider: "claude"}
-		desired, owned := effectiveSkillsForAgent(&shared, a)
+		desired := effectiveSkillsForAgent(&shared, a, nil)
 		if len(desired) != 1 || desired[0].Name != "plan" {
 			t.Fatalf("desired = %+v", desired)
-		}
-		if len(owned) != 1 || owned[0] != filepath.Dir(sharedSkill) {
-			t.Fatalf("owned = %+v", owned)
 		}
 	})
 
@@ -102,9 +100,9 @@ func TestEffectiveSkillsForAgentFourBranches(t *testing.T) {
 	t.Run("copilot provider has no sink", func(t *testing.T) {
 		t.Parallel()
 		a := &config.Agent{Provider: "copilot"}
-		desired, owned := effectiveSkillsForAgent(&shared, a)
-		if desired != nil || owned != nil {
-			t.Fatalf("want (nil, nil), got desired=%+v owned=%+v", desired, owned)
+		desired := effectiveSkillsForAgent(&shared, a, nil)
+		if desired != nil {
+			t.Fatalf("want nil, got %+v", desired)
 		}
 	})
 
@@ -114,21 +112,10 @@ func TestEffectiveSkillsForAgentFourBranches(t *testing.T) {
 		agentDir := filepath.Join(tmp, "agents", "mayor", "skills")
 		mustCreateSkill(t, filepath.Join(agentDir, "private"))
 		a := &config.Agent{Provider: "codex", SkillsDir: agentDir}
-		desired, owned := effectiveSkillsForAgent(&shared, a)
+		desired := effectiveSkillsForAgent(&shared, a, nil)
 		names := namesOf(desired)
 		if !reflect.DeepEqual(names, []string{"plan", "private"}) {
 			t.Fatalf("names = %v", names)
-		}
-		absAgent, _ := filepath.Abs(agentDir)
-		found := false
-		for _, root := range owned {
-			if root == absAgent {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("owned missing agent root %q: %v", absAgent, owned)
 		}
 	})
 
@@ -138,12 +125,9 @@ func TestEffectiveSkillsForAgentFourBranches(t *testing.T) {
 		agentDir := filepath.Join(tmp, "agents", "solo", "skills")
 		mustCreateSkill(t, filepath.Join(agentDir, "only"))
 		a := &config.Agent{Provider: "gemini", SkillsDir: agentDir}
-		desired, owned := effectiveSkillsForAgent(nil, a)
+		desired := effectiveSkillsForAgent(nil, a, nil)
 		if len(desired) != 1 || desired[0].Name != "only" {
 			t.Fatalf("desired = %+v", desired)
-		}
-		if len(owned) != 1 {
-			t.Fatalf("want 1 owned root, got %v", owned)
 		}
 	})
 
@@ -152,9 +136,36 @@ func TestEffectiveSkillsForAgentFourBranches(t *testing.T) {
 		t.Parallel()
 		a := &config.Agent{Provider: "claude"}
 		empty := materialize.CityCatalog{}
-		desired, owned := effectiveSkillsForAgent(&empty, a)
-		if desired != nil || owned != nil {
-			t.Fatalf("want (nil, nil), got desired=%+v owned=%+v", desired, owned)
+		desired := effectiveSkillsForAgent(&empty, a, nil)
+		if desired != nil {
+			t.Fatalf("want nil, got %+v", desired)
+		}
+	})
+
+	// Agent-catalog load error surfaces on stderr — regression for
+	// Phase 3 pass-1 Claude finding #4. Use a directory with
+	// no-read permissions so os.ReadDir fails with an error that
+	// is NOT ErrNotExist (which readSkillDir handles specially).
+	t.Run("agent catalog load error logs to stderr", func(t *testing.T) {
+		t.Parallel()
+		unreadable := filepath.Join(tmp, "unreadable-skills")
+		if err := os.Mkdir(unreadable, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		// Restore perms at cleanup so t.TempDir can remove the tree.
+		t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+
+		// Running as root would bypass the permissions check. Skip if
+		// the unreadable dir is actually readable (e.g., in CI root).
+		if _, err := os.ReadDir(unreadable); err == nil {
+			t.Skip("environment ignores chmod 000 (likely running as root)")
+		}
+
+		a := &config.Agent{Name: "mayor", Provider: "claude", SkillsDir: unreadable}
+		var buf strings.Builder
+		_ = effectiveSkillsForAgent(&shared, a, &buf)
+		if !strings.Contains(buf.String(), "LoadAgentCatalog") {
+			t.Errorf("expected stderr to mention LoadAgentCatalog, got %q", buf.String())
 		}
 	})
 }

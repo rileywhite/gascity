@@ -285,22 +285,22 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	// Step 11b: Skill materialization integration (per engdocs
 	// skill-materialization.md § "When FingerprintExtra[\"skills:*\"]
 	// is populated" and § "Stage 2 runtime gate"). Stage-2 eligible
-	// runtimes (subprocess, tmux) get a PreStart entry for per-session
+	// runtimes (tmux for v0.15.1) get a PreStart entry for per-session
 	// materialization into non-scope-root workdirs, and every eligible
 	// agent gets per-skill fingerprint entries so catalog edits drain.
-	// Stage-2 ineligible runtimes (acp, k8s) get neither — the
-	// materializer cannot reach them, so spurious fingerprint drift
-	// would cause pointless drain-restart cycles.
+	// Stage-2 ineligible runtimes (subprocess/acp/k8s/hybrid/...) get
+	// neither — the materializer cannot reach them, so spurious
+	// fingerprint drift would cause pointless drain-restart cycles.
 	if isStage2EligibleSession(p.sessionProvider, cfgAgent) {
 		scopeRoot := agentScopeRoot(cfgAgent, p.cityPath, p.rigs)
-		desired, ownedRoots := effectiveSkillsForAgent(p.skillCatalog, cfgAgent)
+		canonWorkDir := canonicaliseFilePath(workDir, p.cityPath)
+		desired := effectiveSkillsForAgent(p.skillCatalog, cfgAgent, p.stderr)
 		if len(desired) > 0 {
 			fpExtra = mergeSkillFingerprintEntries(fpExtra, desired)
-			if workDir != scopeRoot {
+			if canonWorkDir != scopeRoot {
 				expandedPreStart = appendMaterializeSkillsPreStart(expandedPreStart, qualifiedName, workDir)
 			}
 		}
-		_ = ownedRoots // reserved for future MaterializeAgent side effects called directly here
 	}
 
 	// Step 12: Build startup hints.
