@@ -520,10 +520,6 @@ func providerProbeSearchDirs(homeDir, goos, basePath string) []string {
 	return searchpath.Expand(homeDir, goos, basePath)
 }
 
-func dedupeProbeSearchDirs(dirs []string) []string {
-	return searchpath.Dedupe(dirs)
-}
-
 func providerProbeSearchPath(homeDir string) string {
 	return searchpath.ExpandPath(homeDir, providerProbeGOOS, providerProbePathEnv)
 }
