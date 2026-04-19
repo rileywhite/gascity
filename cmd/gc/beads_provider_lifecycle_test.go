@@ -5897,9 +5897,15 @@ esac
 		t.Fatal(err)
 	}
 
-	baseEnv := append(os.Environ(),
+	// Must use sanitizedBaseEnv, not append(os.Environ(), ...). Raw
+	// inheritance leaks GC_CITY_RUNTIME_DIR / GC_PACK_STATE_DIR /
+	// GC_DOLT_STATE_FILE from the user's shell into this script, aiming
+	// dolt-provider-state.json at the user's real registered city
+	// instead of this test's t.TempDir() — confirmed in the wild on a
+	// dev workstation where a previous run of this test clobbered a
+	// live city. Regression guard for gastownhall/gascity#938.
+	baseEnv := sanitizedBaseEnv(
 		"GC_CITY_PATH="+cityPath,
-		"GC_BIN=",
 		"PATH="+strings.Join([]string{binDir, os.Getenv("PATH")}, string(os.PathListSeparator)),
 	)
 
