@@ -80,8 +80,12 @@ func LoadWithIncludesOptions(fs fsys.FS, path string, opts LoadOptions, extraInc
 	if packData, pErr := fs.ReadFile(packPath); pErr == nil {
 		packExists = true
 		var pc packConfig
-		if _, decErr := toml.Decode(string(packData), &pc); decErr != nil {
+		md, decErr := toml.Decode(string(packData), &pc)
+		if decErr != nil {
 			return nil, nil, fmt.Errorf("parsing city pack.toml: %w", decErr)
+		}
+		if warnings := CheckUndecodedKeys(md, packPath); len(warnings) > 0 {
+			return nil, nil, fmt.Errorf("parsing city pack.toml: %s", strings.Join(warnings, "; "))
 		}
 		if err := validatePackMeta(&pc.Pack); err != nil {
 			return nil, nil, fmt.Errorf("city pack.toml: %w", err)

@@ -983,8 +983,12 @@ func loadPackWithCacheOptions(fs fsys.FS, topoPath, topoDir, cityRoot, rigName s
 	}
 
 	var tc packConfig
-	if _, err := toml.Decode(string(data), &tc); err != nil {
+	md, err := toml.Decode(string(data), &tc)
+	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("parsing %s: %w", packFile, err)
+	}
+	if warnings := CheckUndecodedKeys(md, topoPath); len(warnings) > 0 {
+		return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("parsing %s: %s", packFile, strings.Join(warnings, "; "))
 	}
 
 	if err := validatePackMeta(&tc.Pack); err != nil {
