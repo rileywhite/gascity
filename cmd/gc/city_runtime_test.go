@@ -48,8 +48,8 @@ func TestSweepUndesiredPoolSessionBeads_KeepsRunningSessionsOpen(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		sp,
@@ -124,8 +124,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsCreatingState(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -177,8 +177,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsRecentlyCreated(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -225,8 +225,8 @@ func TestSweepUndesiredPoolSessionBeads_SweepsStaleCreatingState(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -266,8 +266,8 @@ func TestSweepUndesiredPoolSessionBeads_SweepsLongStuckActiveWithoutWake(t *test
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -307,8 +307,8 @@ func TestSweepUndesiredPoolSessionBeads_SweepsActiveWithoutCreationCompleteAt(t 
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -354,8 +354,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsAwakeStateInPreWakeWindow(t *testin
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -403,8 +403,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsRecoveredActiveBead(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -454,8 +454,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsFreshRestartAfterPriorCrash(t *test
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -500,8 +500,8 @@ func TestSweepUndesiredPoolSessionBeads_SweepsCrashedActiveBead(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -536,8 +536,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsPendingCreateClaim(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -584,8 +584,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsStalePendingCreateClaim(t *testing.
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -620,8 +620,8 @@ func TestSweepUndesiredPoolSessionBeads_ClosesStoppedSessions(t *testing.T) {
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
@@ -659,22 +659,21 @@ func TestSweepUndesiredPoolSessionBeads_KeepsAssignedSessionsOpen(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Create session bead: %v", err)
 	}
-	work, err := store.Create(beads.Bead{
+	if _, err := store.Create(beads.Bead{
 		Title:    "assigned work",
 		Type:     "task",
 		Status:   "in_progress",
 		Assignee: "worker-bd-123",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("Create work bead: %v", err)
 	}
 	sessionBeads := newSessionBeadSnapshot([]beads.Bead{bead})
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
+		nil,
 		sessionBeads,
 		nil,
-		[]beads.Bead{work},
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
 		false,
@@ -715,8 +714,8 @@ func TestSweepUndesiredPoolSessionBeads_SkipsPartialAssignedSnapshot(t *testing.
 
 	closed := sweepUndesiredPoolSessionBeads(
 		store,
-		sessionBeads,
 		nil,
+		sessionBeads,
 		nil,
 		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),

@@ -25,8 +25,7 @@ type DesiredStateResult struct {
 	State              map[string]TemplateParams
 	BaseState          map[string]TemplateParams
 	ScaleCheckCounts   map[string]int // nil when store is nil or scale_check not run
-	AssignedWorkBeads  []beads.Bead   // actionable assigned work: in_progress or ready+assigned
-	OwnershipWorkBeads []beads.Bead   // all assigned work that preserves session ownership: open or in_progress
+	AssignedWorkBeads []beads.Bead // actionable assigned work: in_progress or ready+assigned
 	// NamedSessionDemand records which named-session identities have active
 	// demand — either direct assignee demand (Assignee == identity) or
 	// work_query-detected ready work. The reconciler merges this into
@@ -233,13 +232,9 @@ func buildDesiredStateWithSessionBeads(
 	// named session on_demand wake. Hoisted out of the store block so
 	// the named session section can also use it.
 	var assignedWorkBeads []beads.Bead
-	var ownershipWorkBeads []beads.Bead
 	var storePartial bool
 	if store != nil {
 		assignedWorkBeads, storePartial = collectAssignedWorkBeads(cfg, store, rigStores, suspendedRigPaths)
-		var ownershipPartial bool
-		ownershipWorkBeads, ownershipPartial = collectOwnershipWorkBeads(cfg, store, rigStores, suspendedRigPaths)
-		storePartial = storePartial || ownershipPartial
 		if storePartial {
 			fmt.Fprintf(stderr, "assignedWorkBeads: PARTIAL — store query failed, drain decisions suppressed\n") //nolint:errcheck
 		}
@@ -407,7 +402,6 @@ func buildDesiredStateWithSessionBeads(
 		BaseState:          baseDesired,
 		ScaleCheckCounts:   scaleCheckCounts,
 		AssignedWorkBeads:  assignedWorkBeads,
-		OwnershipWorkBeads: ownershipWorkBeads,
 		NamedSessionDemand: namedWorkReady,
 		StoreQueryPartial:  storePartial,
 		BeaconTime:         beaconTime,
@@ -491,19 +485,6 @@ func collectAssignedWorkBeads(
 	suspendedRigPaths map[string]bool,
 ) ([]beads.Bead, bool) {
 	return collectAssignedWorkSnapshot(cfg, cityStore, rigStores, suspendedRigPaths, false)
-}
-
-// collectOwnershipWorkBeads queries each store (city + rigs) for all assigned
-// work that should preserve session ownership. Unlike collectAssignedWorkBeads,
-// this includes blocked open work so lifecycle close/sweep paths never retire
-// a session bead while future assigned work still points at it.
-func collectOwnershipWorkBeads(
-	cfg *config.City,
-	cityStore beads.Store,
-	rigStores map[string]beads.Store,
-	suspendedRigPaths map[string]bool,
-) ([]beads.Bead, bool) {
-	return collectAssignedWorkSnapshot(cfg, cityStore, rigStores, suspendedRigPaths, true)
 }
 
 func collectAssignedWorkSnapshot(

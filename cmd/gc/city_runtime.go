@@ -760,9 +760,9 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 	}
 	if sweepUndesiredPoolSessionBeads(
 		store,
+		cr.rigBeadStores(),
 		sessionBeads,
 		desiredState,
-		result.OwnershipWorkBeads,
 		cr.cfg,
 		cr.sp,
 		result.StoreQueryPartial,
@@ -866,7 +866,7 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 	reconcileSessionBeadsTraced(
 		ctx, cr.cityPath, open, desiredState, cfgNames, cr.cfg, cr.sp, store,
 		cr.dops,
-		assignedWorkBeads, result.OwnershipWorkBeads, readyWaitSet, cr.sessionDrains, poolDesired,
+		assignedWorkBeads, cr.rigBeadStores(), readyWaitSet, cr.sessionDrains, poolDesired,
 		result.StoreQueryPartial,
 		workSet, cityName,
 		cr.it, clock.Real{}, cr.rec, cr.cfg.Session.StartupTimeoutDuration(),
@@ -908,9 +908,9 @@ func (cr *CityRuntime) requestDeferredDrainFollowUpTick() {
 
 func sweepUndesiredPoolSessionBeads(
 	store beads.Store,
+	rigStores map[string]beads.Store,
 	sessionBeads *sessionBeadSnapshot,
 	desiredState map[string]TemplateParams,
-	assignedWorkBeads []beads.Bead,
 	cfg *config.City,
 	sp runtime.Provider,
 	storeQueryPartial bool,
@@ -1009,7 +1009,7 @@ func sweepUndesiredPoolSessionBeads(
 		}
 		candidates = append(candidates, bead)
 	}
-	return len(GCSweepSessionBeads(store, candidates))
+	return len(GCSweepSessionBeads(store, rigStores, candidates))
 }
 
 // isStaleCreating mirrors staleCreatingState in session_reconcile.go without
@@ -1097,7 +1097,7 @@ func (cr *CityRuntime) controlDispatcherTick(ctx context.Context) {
 		store,
 		cr.dops,
 		nil,
-		wfcResult.OwnershipWorkBeads,
+		cr.rigBeadStores(),
 		nil, // control-dispatcher ticks only need ownership continuity, not main-tick assigned/ready snapshots
 		cr.sessionDrains,
 		poolDesired,

@@ -140,6 +140,12 @@ func reconcileSessionBeads(
 	)
 }
 
+// reconcileSessionBeadsAtPath runs the reconciler for a specific city
+// path. rigStores supplies the attached rig bead stores so live
+// cross-store ownership checks (sessionHasOpenAssignedWork) can see
+// work that lives outside the primary store. Pass nil when no rig
+// stores are attached; the reconciler will fall back to primary-store-
+// only queries.
 func reconcileSessionBeadsAtPath(
 	ctx context.Context,
 	cityPath string,
@@ -151,7 +157,7 @@ func reconcileSessionBeadsAtPath(
 	store beads.Store,
 	dops drainOps,
 	assignedWorkBeads []beads.Bead,
-	ownershipWorkBeads []beads.Bead,
+	rigStores map[string]beads.Store,
 	readyWaitSet map[string]bool,
 	dt *drainTracker,
 	poolDesired map[string]int,
@@ -166,7 +172,7 @@ func reconcileSessionBeadsAtPath(
 	stdout, stderr io.Writer,
 ) int {
 	return reconcileSessionBeadsTraced(
-		ctx, cityPath, sessions, desiredState, configuredNames, cfg, sp, store, dops, assignedWorkBeads, ownershipWorkBeads, readyWaitSet, dt,
+		ctx, cityPath, sessions, desiredState, configuredNames, cfg, sp, store, dops, assignedWorkBeads, rigStores, readyWaitSet, dt,
 		poolDesired, storeQueryPartial, workSet, cityName, it, clk, rec, startupTimeout, driftDrainTimeout, stdout, stderr, nil,
 	)
 }
@@ -182,7 +188,7 @@ func reconcileSessionBeadsTraced(
 	store beads.Store,
 	dops drainOps,
 	assignedWorkBeads []beads.Bead,
-	ownershipWorkBeads []beads.Bead,
+	rigStores map[string]beads.Store,
 	readyWaitSet map[string]bool,
 	dt *drainTracker,
 	poolDesired map[string]int,
@@ -201,11 +207,6 @@ func reconcileSessionBeadsTraced(
 	if cityName == "" {
 		cityName = config.EffectiveCityName(cfg, "")
 	}
-	// ownershipWorkBeads is retained for backward-compatible signatures but
-	// is no longer consulted: both the drain-ack decision and the pool-slot
-	// close gate now query the live store via sessionHasOpenAssignedWork so
-	// a pre-close tick snapshot cannot poison terminal state decisions.
-	_ = ownershipWorkBeads
 
 	// Phase 0: Heal expired timers on all sessions.
 	for i := range sessions {
@@ -334,7 +335,7 @@ func reconcileSessionBeadsTraced(
 					if storeQueryPartial {
 						continue
 					}
-					closeSessionBeadIfUnassigned(store, *session, reason, clk.Now().UTC(), stderr)
+					closeSessionBeadIfUnassigned(store, rigStores, *session, reason, clk.Now().UTC(), stderr)
 				}
 				continue
 			}
@@ -422,7 +423,7 @@ func reconcileSessionBeadsTraced(
 						// the bead from the close gate and stranded new
 						// queue work on a ghost slot. Re-query the store
 						// so the decision reflects reality.
-						hasAssignedWork, assignedErr := sessionHasOpenAssignedWork(store, *session)
+						hasAssignedWork, assignedErr := sessionHasOpenAssignedWork(store, rigStores, *session)
 						sleepReason := "idle"
 						if assignedErr != nil {
 							fmt.Fprintf(stderr, "session reconciler: checking assigned work for drain-acked %s: %v\n", name, assignedErr) //nolint:errcheck
@@ -872,21 +873,21 @@ func reconcileSessionBeadsTraced(
 		// a terminal sleep state (drained, or asleep from a normal idle drain)
 		// must free their slot so a fresh worker can spawn for new queue work.
 		// Anything else (wait-hold, pending interaction, named/singleton) is
-		// preserved. The stale `ownershipWorkBeads` snapshot taken earlier in
-		// the tick predates the agent's own `bd close` of its last unit of
-		// work, so we re-query the live store here and at the drain-ack
-		// handler above — never trust a stale snapshot for a decision that
-		// closes a bead.
-		// Only pool-managed sessions are disposable after a completed drain.
-		// Singleton/named controller-managed identities must keep the same
-		// bead so later wake/restart happens in place instead of minting a
-		// fresh canonical owner. Hoist isPoolManagedSessionBead up here so
-		// non-pool sessions skip the live-store query entirely.
+		// preserved.
+		//
+		// A pre-tick ownership snapshot predates the agent's own `bd close`
+		// of its last unit of work, so this gate (and the drain-ack handler
+		// above) queries the live store — across the primary store AND any
+		// attached rig stores — via sessionHasOpenAssignedWork to avoid
+		// closing a session that still owns work. Only pool-managed sessions
+		// are disposable; singleton/named controller-managed identities must
+		// keep the same bead so later wake/restart happens in place instead
+		// of minting a fresh canonical owner.
 		hasAssignedWork := false
 		poolFreeable := !shouldWake && !target.alive && isPoolSessionSlotFreeable(*target.session) && isPoolManagedSessionBead(*target.session)
 		if poolFreeable {
 			var assignedErr error
-			hasAssignedWork, assignedErr = sessionHasOpenAssignedWork(store, *target.session)
+			hasAssignedWork, assignedErr = sessionHasOpenAssignedWork(store, rigStores, *target.session)
 			if assignedErr != nil {
 				fmt.Fprintf(stderr, "session reconciler: checking assigned work for drained %s: %v\n", target.session.Metadata["session_name"], assignedErr) //nolint:errcheck
 				hasAssignedWork = true
@@ -970,7 +971,30 @@ func resolvePreservedConfiguredNamedSessionTemplate(
 	return tp, nil
 }
 
-func sessionHasOpenAssignedWork(store beads.Store, session beads.Bead) (bool, error) {
+// sessionHasOpenAssignedWork reports whether any open or in-progress
+// work bead is assigned to the given session across the primary store
+// AND any attached rig stores. This preserves cross-store ownership
+// coverage that used to come from the retired ownership snapshot.
+//
+// A session's work bead can live in a rig store (e.g., a city-stored
+// session whose work was routed to a rig), so the close gate and
+// drain-ack must check every store the bead could live in before
+// recycling the session's slot. Live queries are used throughout:
+// any individual store failure fails the whole check closed so
+// transient errors cannot cause premature close.
+func sessionHasOpenAssignedWork(store beads.Store, rigStores map[string]beads.Store, session beads.Bead) (bool, error) {
+	if has, err := sessionHasOpenAssignedWorkInStore(store, session); err != nil || has {
+		return has, err
+	}
+	for _, rs := range rigStores {
+		if has, err := sessionHasOpenAssignedWorkInStore(rs, session); err != nil || has {
+			return has, err
+		}
+	}
+	return false, nil
+}
+
+func sessionHasOpenAssignedWorkInStore(store beads.Store, session beads.Bead) (bool, error) {
 	if store == nil {
 		return false, nil
 	}

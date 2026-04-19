@@ -86,41 +86,6 @@ func TestCollectAssignedWorkBeads_ExcludesBlockedOpenAssignedHandoff(t *testing.
 	}
 }
 
-func TestCollectOwnershipWorkBeads_IncludesBlockedOpenAssignedHandoff(t *testing.T) {
-	store := beads.NewMemStore()
-	blocker, err := store.Create(beads.Bead{
-		Title:  "blocker",
-		Type:   "task",
-		Status: "open",
-	})
-	if err != nil {
-		t.Fatalf("create blocker bead: %v", err)
-	}
-	handoff, err := store.Create(beads.Bead{
-		Title:    "merge me later",
-		Type:     "task",
-		Status:   "open",
-		Assignee: "repo/refinery",
-	})
-	if err != nil {
-		t.Fatalf("create handoff bead: %v", err)
-	}
-	if err := store.DepAdd(handoff.ID, blocker.ID, "blocks"); err != nil {
-		t.Fatalf("add blocking dep: %v", err)
-	}
-
-	got, partial := collectOwnershipWorkBeads(&config.City{}, store, nil, nil)
-	if partial {
-		t.Fatal("collectOwnershipWorkBeads unexpectedly reported partial results")
-	}
-	if len(got) != 1 {
-		t.Fatalf("collectOwnershipWorkBeads returned %d beads, want 1: %#v", len(got), got)
-	}
-	if got[0].ID != handoff.ID {
-		t.Fatalf("collectOwnershipWorkBeads returned %q, want %q", got[0].ID, handoff.ID)
-	}
-}
-
 func TestCollectAssignedWorkBeads_ExcludesRoutedToMetadataWithoutAssignee(t *testing.T) {
 	t.Parallel()
 	store := beads.NewMemStore()

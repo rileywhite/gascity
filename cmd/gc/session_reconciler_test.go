@@ -357,19 +357,21 @@ func TestReconcileSessionBeads_DrainAckWithAssignedOpenWorkSleepsInsteadOfDraini
 	}
 }
 
-// TestReconcileSessionBeads_DrainAckIgnoresStaleOwnershipSnapshot is the
-// regression guard for the stuck-pool-worker bug on ga-ttn5z. The drain-ack
-// handler used to take `hasAssignedWork` from an `ownershipWorkBeads`
-// snapshot captured earlier in the tick. Pool workers close their own
-// work bead with `bd close` BEFORE calling `gc runtime drain-ack`, so
-// the snapshot still reported the now-closed bead as open+assigned.
-// That falsely flipped the session into CompleteDrainPatch (state=asleep,
-// sleep_reason=idle) instead of AcknowledgeDrainPatch (state=drained),
-// which hid the bead from the close gate and stranded new queue work on
-// a ghost slot. Fix: drain-ack re-queries the live store, ignoring the
-// stale snapshot. This test exercises that path by passing a snapshot
-// that lies ("bead assigned, open") while the store says otherwise.
-func TestReconcileSessionBeads_DrainAckIgnoresStaleOwnershipSnapshot(t *testing.T) {
+// TestReconcileSessionBeads_DrainAckUsesLiveStoreQuery is the regression
+// guard for the stuck-pool-worker bug on ga-ttn5z. Pool workers close
+// their own work bead with `bd close` BEFORE calling `gc runtime
+// drain-ack`; the old code path then read `hasAssignedWork` from a tick
+// snapshot captured before the close, so the snapshot falsely reported
+// the now-closed bead as open+assigned. That flipped the session into
+// CompleteDrainPatch (state=asleep, sleep_reason=idle) instead of
+// AcknowledgeDrainPatch (state=drained), which hid the bead from the
+// close gate and stranded new queue work on a ghost slot.
+//
+// Fix: the snapshot-based path is gone; drain-ack queries the live
+// store via sessionHasOpenAssignedWork. This test verifies the
+// post-fix outcome: with no open assigned work in the store, drain-ack
+// lands the session in `drained` (the correct terminal for recycling).
+func TestReconcileSessionBeads_DrainAckUsesLiveStoreQuery(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
 		Agents: []config.Agent{{Name: "worker"}},
@@ -377,18 +379,6 @@ func TestReconcileSessionBeads_DrainAckIgnoresStaleOwnershipSnapshot(t *testing.
 	env.addDesired("worker", "worker", true)
 	session := env.createSessionBead("worker", "worker")
 	env.markSessionActive(&session)
-
-	// Stale snapshot: claims an assigned open bead exists, but the live
-	// store has no such record (the agent already closed it before
-	// calling drain-ack).
-	stale := beads.Bead{
-		ID:       "stale-work",
-		Title:    "already closed",
-		Type:     "task",
-		Status:   "open",
-		Assignee: session.ID,
-	}
-	staleSnapshot := []beads.Bead{stale}
 
 	dops := newFakeDrainOps()
 	if err := dops.setDrainAck("worker"); err != nil {
@@ -406,7 +396,7 @@ func TestReconcileSessionBeads_DrainAckIgnoresStaleOwnershipSnapshot(t *testing.
 		env.store,
 		dops,
 		nil,
-		staleSnapshot, // lies about assigned work
+		nil, // rigStores
 		nil,
 		env.dt,
 		nil,
@@ -427,7 +417,7 @@ func TestReconcileSessionBeads_DrainAckIgnoresStaleOwnershipSnapshot(t *testing.
 		t.Fatalf("Get(%s): %v", session.ID, err)
 	}
 	if got.Metadata["state"] != "drained" {
-		t.Fatalf("state = %q, want drained — live store query must override the stale snapshot that claimed assigned work", got.Metadata["state"])
+		t.Fatalf("state = %q, want drained — drain-ack must query the live store and land a session with no assigned work in drained state", got.Metadata["state"])
 	}
 }
 
@@ -438,14 +428,6 @@ func TestReconcileSessionBeads_DrainAckIgnoresStaleOwnershipSnapshot(t *testing.
 // spawn a fresh worker for pending queue work. Before the fix the close
 // gate only fired for state=drained, so idle-asleep pool beads sat open
 // indefinitely and blocked new spawns.
-//
-// The test passes a stale ownership snapshot that lies about assigned
-// work (mirroring the drain-ack regression). Before the close gate was
-// rewired to call closeBead directly, the gate's live query cleared work
-// but the downstream closeSessionBeadIfUnassigned helper re-consulted
-// the stale snapshot and vetoed the close — reintroducing the ghost
-// slot. With the direct closeBead call, the snapshot can no longer veto
-// a close that the live query has already cleared.
 func TestReconcileSessionBeads_AsleepIdlePoolBeadFreesSlot(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
@@ -461,20 +443,6 @@ func TestReconcileSessionBeads_AsleepIdlePoolBeadFreesSlot(t *testing.T) {
 		poolManagedMetadataKey: boolMetadata(true),
 	})
 
-	// Stale snapshot: claims the pool worker still has an open assigned
-	// bead. The live store has no such record (the worker already closed
-	// it before its runtime exited). If the close path re-reads this
-	// snapshot, it will veto the close and leak the slot — which is
-	// exactly the regression this test exists to guard.
-	stale := beads.Bead{
-		ID:       "stale-work",
-		Title:   "already closed",
-		Type:     "task",
-		Status:   "open",
-		Assignee: session.ID,
-	}
-	staleSnapshot := []beads.Bead{stale}
-
 	reconcileSessionBeadsAtPath(
 		context.Background(),
 		"",
@@ -486,7 +454,7 @@ func TestReconcileSessionBeads_AsleepIdlePoolBeadFreesSlot(t *testing.T) {
 		env.store,
 		newFakeDrainOps(),
 		nil,
-		staleSnapshot, // lies about assigned work
+		nil, // rigStores
 		nil,
 		env.dt,
 		nil,
@@ -507,7 +475,7 @@ func TestReconcileSessionBeads_AsleepIdlePoolBeadFreesSlot(t *testing.T) {
 		t.Fatalf("Get(%s): %v", session.ID, err)
 	}
 	if got.Status != "closed" {
-		t.Fatalf("status = %q, want closed — asleep-idle pool beads must free their slot even when the stale ownership snapshot falsely reports assigned work", got.Status)
+		t.Fatalf("status = %q, want closed — asleep-idle pool beads must free their slot via the live-query close gate", got.Status)
 	}
 }
 
@@ -646,6 +614,73 @@ func TestReconcileSessionBeads_CloseGateLiveStoreErrorKeepsSlot(t *testing.T) {
 	}
 	if got.Status == "closed" {
 		t.Fatalf("status = %q, want open — close-gate live-query error must fail closed (hasAssignedWork=true) so the pool slot stays open until the store can confirm no assignments", got.Status)
+	}
+}
+
+// TestReconcileSessionBeads_CloseGateRespectsCrossStoreAssignedWork
+// verifies that the close gate's live ownership check looks across the
+// primary store AND any attached rig stores. A city-stored asleep+idle
+// pool session with work assigned to it in a rig store must NOT get
+// its slot freed — the rig-stored work would be orphaned.
+func TestReconcileSessionBeads_CloseGateRespectsCrossStoreAssignedWork(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{
+		Agents: []config.Agent{{Name: "worker"}},
+	}
+	env.addDesired("worker", "worker", false)
+	session := env.createSessionBead("worker", "worker")
+	env.setSessionMetadata(&session, map[string]string{
+		"state":              "asleep",
+		"sleep_reason":       "idle",
+		poolManagedMetadataKey: boolMetadata(true),
+	})
+
+	// Work assigned to the session lives in a rig store, not the city
+	// store. The live cross-store query must find it and veto the close.
+	rigStore := beads.NewMemStore()
+	if _, err := rigStore.Create(beads.Bead{
+		Title:    "cross-store work",
+		Type:     "task",
+		Status:   "open",
+		Assignee: session.ID,
+	}); err != nil {
+		t.Fatalf("Create rig work bead: %v", err)
+	}
+	rigStores := map[string]beads.Store{"some-rig": rigStore}
+
+	reconcileSessionBeadsAtPath(
+		context.Background(),
+		"",
+		[]beads.Bead{session},
+		env.desiredState,
+		map[string]bool{"worker": true},
+		env.cfg,
+		env.sp,
+		env.store,
+		newFakeDrainOps(),
+		nil,
+		rigStores,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", session.ID, err)
+	}
+	if got.Status == "closed" {
+		t.Fatalf("status = %q, want open — close gate must honor cross-store assigned work and leave the pool slot for the rig-stored work to drain", got.Status)
 	}
 }
 
@@ -884,7 +919,7 @@ func TestReconcileSessionBeads_DrainedPoolSessionPartialOwnershipSnapshotStaysOp
 		env.store,
 		nil,
 		nil,
-		[]beads.Bead{},
+		nil, // rigStores
 		nil,
 		env.dt,
 		map[string]int{},
