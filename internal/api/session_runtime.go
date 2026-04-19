@@ -162,6 +162,9 @@ func (s *Server) resolveWorkerSessionRuntime(info session.Info, _ string) (*work
 	if err != nil {
 		return nil, err
 	}
+	if storedCommand := strings.TrimSpace(info.Command); storedCommand != "" {
+		command = storedCommand
+	}
 	runtimeCfg, err := worker.NormalizeResolvedRuntime(worker.ResolvedRuntime{
 		Command:    command,
 		WorkDir:    firstNonEmptyString(info.WorkDir, workDir),

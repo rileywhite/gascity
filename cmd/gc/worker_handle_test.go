@@ -597,3 +597,42 @@ func TestWorkerSessionRuntimeResolverWithConfigFallsBackToPersistedRuntimeOnInco
 		t.Fatalf("Hints.ReadyDelayMs = %d, want %d", got, want)
 	}
 }
+
+func TestWorkerSessionRuntimeResolverWithConfigFallsBackToPersistedProviderWhenCommandMissing(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:     "worker",
+			Provider: "resolved-provider",
+		}},
+		Providers: map[string]config.ProviderSpec{
+			"resolved-provider": {
+				ReadyPromptPrefix: "resolved-ready>",
+			},
+		},
+	}
+
+	resolver := workerSessionRuntimeResolverWithConfig(t.TempDir(), cfg)
+	if resolver == nil {
+		t.Fatal("workerSessionRuntimeResolverWithConfig() = nil")
+	}
+
+	info := session.Info{
+		Template: "worker",
+		Provider: "persisted-provider",
+	}
+
+	runtimeCfg, err := resolver(info, "")
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	if runtimeCfg == nil {
+		t.Fatal("resolver() = nil")
+	}
+	if got, want := runtimeCfg.Command, info.Provider; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+	if got, want := runtimeCfg.Provider, info.Provider; got != want {
+		t.Fatalf("Provider = %q, want %q", got, want)
+	}
+}

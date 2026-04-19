@@ -330,7 +330,7 @@ func resolvedWorkerRuntimeWithConfig(cityPath string, cfg *config.City, info ses
 			command = launchCommand.Command
 		}
 	}
-	command = firstNonEmptyGCString(command, resolved.Name, info.Provider)
+	command = firstNonEmptyGCString(command, info.Provider, resolved.Name)
 
 	workDir := strings.TrimSpace(info.WorkDir)
 	if workDir == "" {
