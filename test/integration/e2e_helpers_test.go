@@ -4,17 +4,22 @@ package integration
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"text/template"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/pathutil"
 	"github.com/gastownhall/gascity/test/tmuxtest"
 )
 
@@ -403,6 +408,7 @@ func setupE2ECity(t *testing.T, guard *tmuxtest.Guard, city e2eCity) string {
 		}
 		waitForAgentRunning(t, cityDir, qualifiedName, 15*time.Second)
 	}
+	waitForControllerReady(t, cityDir, 15*time.Second)
 
 	t.Cleanup(func() {
 		unregisterCityCommandEnv(cityDir)
@@ -565,6 +571,75 @@ func waitForAgentRunning(t *testing.T, cityDir, agentName string, timeout time.D
 	}
 	out, _ := gc(cityDir, "session", "list", "--state", "all")
 	t.Fatalf("agent %q not active within %s\nsessions:\n%s", agentName, timeout, out)
+}
+
+// waitForControllerReady waits until the standalone controller both holds the
+// controller lock and responds on its control socket. gc start rejects a
+// running standalone controller by probing the socket first, so the helper
+// must wait for the same readiness condition to avoid CI races.
+func waitForControllerReady(t *testing.T, cityDir string, timeout time.Duration) {
+	t.Helper()
+	lockPath := filepath.Join(cityDir, ".gc", "controller.lock")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		lockHeld, err := controllerLockHeld(lockPath)
+		if err == nil && lockHeld && controllerAlive(cityDir) != 0 {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("controller was not ready within %s: lock=%s socket=%s", timeout, lockPath, controllerSocketPath(cityDir))
+}
+
+func controllerLockHeld(lockPath string) (bool, error) {
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close() //nolint:errcheck // best-effort probe cleanup
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
+			return true, nil
+		}
+		return false, err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck // best-effort probe cleanup
+	return false, nil
+}
+
+const controllerSocketPathLimit = 100
+
+func controllerSocketPath(cityPath string) string {
+	canonicalCityPath := pathutil.NormalizePathForCompare(cityPath)
+	legacy := filepath.Join(cityPath, ".gc", "controller.sock")
+	canonicalLegacy := filepath.Join(canonicalCityPath, ".gc", "controller.sock")
+	if len(canonicalLegacy) <= controllerSocketPathLimit {
+		return legacy
+	}
+	sum := sha256.Sum256([]byte(canonicalCityPath))
+	return filepath.Join("/tmp", "gascity-controller", fmt.Sprintf("%x.sock", sum[:16]))
+}
+
+func controllerAlive(cityPath string) int {
+	sockPath := controllerSocketPath(cityPath)
+	conn, err := net.DialTimeout("unix", sockPath, 500*time.Millisecond)
+	if err != nil {
+		return 0
+	}
+	defer conn.Close() //nolint:errcheck // best-effort cleanup
+	conn.Write([]byte("ping\n"))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck // best-effort deadline
+	buf := make([]byte, 64)
+	n, err := conn.Read(buf)
+	if err != nil || n == 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(buf[:n])))
+	if err != nil {
+		return 0
+	}
+	return pid
 }
 
 func qualifiedE2EAgentName(a e2eAgent) string {

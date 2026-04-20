@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/fsys"
 )
 
 // Options configures the migration run.
@@ -208,6 +209,9 @@ func loadCityFile(path string) (*config.City, error) {
 	if err != nil {
 		return nil, fmt.Errorf("migrate %q: %w", path, err)
 	}
+	if err := config.ResolveWorkspaceIdentity(fsys.OSFS{}, filepath.Dir(path), cfg); err != nil {
+		return nil, fmt.Errorf("migrate %q: resolve workspace identity: %w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -400,10 +404,7 @@ func migrateAgentAssets(cityPath string, entry agentEntry, usage usageCounts, re
 func ensurePackMeta(packCfg *packFile, cityCfg *config.City, cityPath string) bool {
 	changed := false
 	if packCfg.Pack.Name == "" {
-		packCfg.Pack.Name = strings.TrimSpace(cityCfg.Workspace.Name)
-		if packCfg.Pack.Name == "" {
-			packCfg.Pack.Name = filepath.Base(cityPath)
-		}
+		packCfg.Pack.Name = strings.TrimSpace(config.EffectiveCityName(cityCfg, filepath.Base(cityPath)))
 		changed = true
 	}
 	if packCfg.Pack.Schema == 0 {

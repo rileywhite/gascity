@@ -3194,6 +3194,118 @@ prompt_template = "prompts/mayor.md"
 	}
 }
 
+func TestCmdInitFromTOMLFileFallsBackToSiblingPackName(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	configureIsolatedRuntimeEnv(t)
+
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "template")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(srcDir, "city.toml")
+	if err := os.WriteFile(src, []byte(`[workspace]
+provider = "claude"
+
+[[agent]]
+name = "mayor"
+prompt_template = "prompts/mayor.md"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "pack.toml"), []byte(`[pack]
+name = "pack-template"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cityPath := filepath.Join(dir, "target-basename")
+	if err := os.MkdirAll(cityPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := cmdInitFromTOMLFileWithOptions(fsys.OSFS{}, src, cityPath, "", &stdout, &stderr, false)
+	if code != 0 {
+		t.Fatalf("cmdInitFromTOMLFileWithOptions = %d, want 0; stderr: %s", code, stderr.String())
+	}
+
+	binding := mustLoadSiteBinding(t, fsys.OSFS{}, cityPath)
+	if binding.WorkspaceName != "pack-template" {
+		t.Fatalf("binding.WorkspaceName = %q, want %q", binding.WorkspaceName, "pack-template")
+	}
+
+	packData, err := os.ReadFile(filepath.Join(cityPath, "pack.toml"))
+	if err != nil {
+		t.Fatalf("reading pack.toml: %v", err)
+	}
+	if !strings.Contains(string(packData), `name = "pack-template"`) {
+		t.Fatalf("pack.toml missing pack-template fallback:\n%s", string(packData))
+	}
+}
+
+func TestOverrideCityNameDoesNotPinDeclaredPrefixIntoSiteBinding(t *testing.T) {
+	dir := t.TempDir()
+	cityPath := filepath.Join(dir, "bright-lights")
+	if err := os.MkdirAll(cityPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tomlPath := filepath.Join(cityPath, "city.toml")
+	if err := os.WriteFile(tomlPath, []byte(`[workspace]
+name = "declared-city"
+prefix = "dc"
+provider = "claude"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	if code := overrideCityName(fsys.OSFS{}, tomlPath, "machine-alias", &stderr); code != 0 {
+		t.Fatalf("overrideCityName = %d, want 0; stderr: %s", code, stderr.String())
+	}
+
+	binding := mustLoadSiteBinding(t, fsys.OSFS{}, cityPath)
+	if binding.WorkspaceName != "machine-alias" {
+		t.Fatalf("binding.WorkspaceName = %q, want %q", binding.WorkspaceName, "machine-alias")
+	}
+	if binding.WorkspacePrefix != "" {
+		t.Fatalf("binding.WorkspacePrefix = %q, want empty", binding.WorkspacePrefix)
+	}
+}
+
+func TestOverrideCityNamePreservesExistingSiteBoundPrefix(t *testing.T) {
+	dir := t.TempDir()
+	cityPath := filepath.Join(dir, "bright-lights")
+	if err := os.MkdirAll(cityPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tomlPath := filepath.Join(cityPath, "city.toml")
+	if err := os.WriteFile(tomlPath, []byte(`[workspace]
+name = "declared-city"
+prefix = "dc"
+provider = "claude"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.PersistWorkspaceSiteBinding(fsys.OSFS{}, cityPath, "site-bound", "sb"); err != nil {
+		t.Fatalf("PersistWorkspaceSiteBinding: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	if code := overrideCityName(fsys.OSFS{}, tomlPath, "machine-alias", &stderr); code != 0 {
+		t.Fatalf("overrideCityName = %d, want 0; stderr: %s", code, stderr.String())
+	}
+
+	binding := mustLoadSiteBinding(t, fsys.OSFS{}, cityPath)
+	if binding.WorkspaceName != "machine-alias" {
+		t.Fatalf("binding.WorkspaceName = %q, want %q", binding.WorkspaceName, "machine-alias")
+	}
+	if binding.WorkspacePrefix != "sb" {
+		t.Fatalf("binding.WorkspacePrefix = %q, want %q", binding.WorkspacePrefix, "sb")
+	}
+}
+
 // --- gc init --from tests ---
 
 func TestDoInitFromDirSuccess(t *testing.T) {

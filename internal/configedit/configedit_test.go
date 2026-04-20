@@ -128,6 +128,64 @@ func TestEdit_ValidationFailure(t *testing.T) {
 	}
 }
 
+func TestEdit_ValidatesRigsAgainstEffectiveHQPrefix(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, `[workspace]
+provider = "claude"
+
+[[agent]]
+name = "mayor"
+provider = "claude"
+
+[[rigs]]
+name = "big-lane"
+path = "/tmp/my-rig"
+`)
+	if err := config.PersistWorkspaceSiteBinding(fsys.OSFS{}, dir, "bright-lights", ""); err != nil {
+		t.Fatalf("PersistWorkspaceSiteBinding: %v", err)
+	}
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+
+	err := ed.Edit(func(_ *config.City) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), `rig "big-lane": prefix "bl" collides with HQ`) {
+		t.Fatalf("Edit error = %v, want HQ prefix collision", err)
+	}
+}
+
+func TestEditExpanded_ValidatesRigsAgainstEffectiveHQPrefix(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, `[workspace]
+provider = "claude"
+
+[[agent]]
+name = "mayor"
+provider = "claude"
+
+[[rigs]]
+name = "big-lane"
+path = "/tmp/my-rig"
+`)
+	if err := config.PersistWorkspaceSiteBinding(fsys.OSFS{}, dir, "bright-lights", ""); err != nil {
+		t.Fatalf("PersistWorkspaceSiteBinding: %v", err)
+	}
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+
+	err := ed.EditExpanded(func(_, _ *config.City) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), `rig "big-lane": prefix "bl" collides with HQ`) {
+		t.Fatalf("EditExpanded error = %v, want HQ prefix collision", err)
+	}
+}
+
 func TestSetAgentSuspended_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTOML(t, dir, minimalCity())

@@ -149,6 +149,28 @@ default_rig_includes = ["../packs/z-pack", "../packs/a-pack"]
 	}
 }
 
+func TestMigrateUsesSiteBoundWorkspaceNameForPackFallback(t *testing.T) {
+	t.Parallel()
+
+	cityDir := t.TempDir()
+	writeFile(t, cityDir, "city.toml", `
+	[workspace]
+	includes = ["../packs/gastown"]
+	`)
+	writeFile(t, cityDir, ".gc/site.toml", `
+	workspace_name = "site-city"
+	`)
+
+	if _, err := Apply(cityDir, Options{}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	packToml := readFile(t, filepath.Join(cityDir, "pack.toml"))
+	if !strings.Contains(packToml, "name = \"site-city\"") {
+		t.Fatalf("pack.toml missing site-bound pack name fallback:\n%s", packToml)
+	}
+}
+
 func TestMigrateRejectsUnknownExistingPackTomlFields(t *testing.T) {
 	t.Parallel()
 

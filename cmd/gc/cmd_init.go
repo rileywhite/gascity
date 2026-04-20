@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -689,6 +690,9 @@ func cmdInitFromTOMLFileWithOptions(fs fsys.FS, tomlSrc, cityPath, nameOverride 
 	// identity when present, but write the machine-local result to
 	// .gc/site.toml instead of checked-in city.toml.
 	sourcePackName := parseInitPackName(data)
+	if sourcePackName == "" {
+		sourcePackName = readInitSourcePackName(fs, filepath.Dir(tomlSrc))
+	}
 	cityName := resolveCityName(nameOverride, cfg.Workspace.Name, sourcePackName, cityPath)
 	cityPrefix := strings.TrimSpace(cfg.Workspace.Prefix)
 	packName := resolvePackName(sourcePackName, cityName)
@@ -744,7 +748,7 @@ func cmdInitFromTOMLFileWithOptions(fs fsys.FS, tomlSrc, cityPath, nameOverride 
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	if err := config.PersistWorkspaceSiteBinding(fs, cityPath, cityName, cityPrefix); err != nil {
+	if err := persistInitWorkspaceIdentity(fs, cityPath, filepath.Join(cityPath, "city.toml"), &cityCfg, cityName, cityPrefix); err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -877,7 +881,7 @@ func doInit(fs fsys.FS, cityPath string, wiz wizardConfig, nameOverride string, 
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	if err := config.PersistWorkspaceSiteBinding(fs, cityPath, cityName, cityPrefix); err != nil {
+	if err := persistInitWorkspaceIdentity(fs, cityPath, tomlPath, &cityCfg, cityName, cityPrefix); err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -1009,15 +1013,12 @@ func initFromSkip(relPath string, isDir bool) bool {
 // overrideCityName stores a machine-local workspace name override in
 // .gc/site.toml while preserving any existing site-bound prefix.
 func overrideCityName(f fsys.FS, tomlPath, name string, stderr io.Writer) int {
-	cfg, err := config.Load(f, tomlPath)
+	binding, err := config.LoadSiteBinding(f, filepath.Dir(tomlPath))
 	if err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	prefix := strings.TrimSpace(cfg.ResolvedWorkspacePrefix)
-	if prefix == "" {
-		prefix = strings.TrimSpace(cfg.Workspace.Prefix)
-	}
+	prefix := strings.TrimSpace(binding.WorkspacePrefix)
 	if err := config.PersistWorkspaceSiteBinding(f, filepath.Dir(tomlPath), name, prefix); err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
@@ -1123,7 +1124,10 @@ func doInitFromDir(srcDir, cityPath string, stdout, stderr io.Writer) int {
 }
 
 func doInitFromDirWithOptions(srcDir, cityPath, nameOverride string, stdout, stderr io.Writer, skipProviderReadiness bool) int {
-	fs := fsys.OSFS{}
+	return doInitFromDirWithOptionsFS(fsys.OSFS{}, srcDir, cityPath, nameOverride, stdout, stderr, skipProviderReadiness)
+}
+
+func doInitFromDirWithOptionsFS(fs fsys.FS, srcDir, cityPath, nameOverride string, stdout, stderr io.Writer, skipProviderReadiness bool) int {
 	// Validate source has city.toml.
 	srcToml := filepath.Join(srcDir, "city.toml")
 	if _, err := os.Stat(srcToml); err != nil {
@@ -1176,7 +1180,7 @@ func doInitFromDirWithOptions(srcDir, cityPath, nameOverride string, stdout, std
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	if err := config.PersistWorkspaceSiteBinding(fs, cityPath, cityName, cityPrefix); err != nil {
+	if err := persistInitWorkspaceIdentity(fs, cityPath, copiedToml, cfg, cityName, cityPrefix); err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -1235,4 +1239,33 @@ func doInitFromDirWithOptions(srcDir, cityPath, nameOverride string, stdout, std
 		skipProviderReadiness: skipProviderReadiness,
 		commandName:           "gc init",
 	})
+}
+
+func persistInitWorkspaceIdentity(fs fsys.FS, cityPath, cityTomlPath string, cfg *config.City, cityName, cityPrefix string) error {
+	if err := config.PersistWorkspaceSiteBinding(fs, cityPath, cityName, cityPrefix); err != nil {
+		if restoreErr := restoreLegacyWorkspaceIdentity(fs, cityTomlPath, cfg, cityName, cityPrefix); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restoring legacy workspace identity: %w", restoreErr))
+		}
+		return err
+	}
+	return nil
+}
+
+func restoreLegacyWorkspaceIdentity(fs fsys.FS, cityTomlPath string, cfg *config.City, cityName, cityPrefix string) error {
+	if cfg == nil {
+		return nil
+	}
+	restored := *cfg
+	restored.Workspace.Name = strings.TrimSpace(cityName)
+	restored.Workspace.Prefix = strings.TrimSpace(cityPrefix)
+	restored.ResolvedWorkspaceName = ""
+	restored.ResolvedWorkspacePrefix = ""
+	content, err := restored.Marshal()
+	if err != nil {
+		return fmt.Errorf("marshal %q: %w", cityTomlPath, err)
+	}
+	if err := fs.WriteFile(cityTomlPath, content, 0o644); err != nil {
+		return fmt.Errorf("write %q: %w", cityTomlPath, err)
+	}
+	return nil
 }

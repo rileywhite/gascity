@@ -354,6 +354,7 @@ func (v2WorkspaceNameCheck) Fix(ctx *doctor.CheckContext) error {
 	}
 	return fsys.WriteFileIfChangedAtomic(fsys.OSFS{}, filepath.Join(ctx.CityPath, "city.toml"), content, 0o644)
 }
+
 func (v2WorkspaceNameCheck) Run(ctx *doctor.CheckContext) *doctor.CheckResult {
 	cfg, ok := parseCityConfig(filepath.Join(ctx.CityPath, "city.toml"))
 	if !ok {

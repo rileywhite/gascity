@@ -121,6 +121,9 @@ var cityRuntimeStartBeadsLifecycle = startBeadsLifecycle
 // (crash tracker, idle tracker, wisp GC, order dispatcher) from the
 // provided parameters.
 func newCityRuntime(p CityRuntimeParams) *CityRuntime {
+	configName := lockedConfigName(p.Cfg, p.CityPath)
+	applyRuntimeCityIdentity(p.Cfg, p.CityName)
+
 	var ct crashTracker
 	if maxR := p.Cfg.Daemon.MaxRestartsOrDefault(); maxR > 0 {
 		ct = newCrashTracker(maxR, p.Cfg.Daemon.RestartWindowDuration())
@@ -163,7 +166,7 @@ func newCityRuntime(p CityRuntimeParams) *CityRuntime {
 	cr := &CityRuntime{
 		cityPath:                p.CityPath,
 		cityName:                p.CityName,
-		configName:              lockedConfigName(p.Cfg, p.CityPath),
+		configName:              configName,
 		tomlPath:                p.TomlPath,
 		watchTargets:            p.WatchTargets,
 		configRev:               p.ConfigRev,
@@ -826,6 +829,7 @@ func (cr *CityRuntime) reloadConfigTraced(
 	oldRigCount := len(cr.cfg.Rigs)
 	oldRevision := cr.configRev
 	nextCfg := result.Cfg
+	applyRuntimeCityIdentity(nextCfg, cr.cityName)
 	nextSp := cr.sp
 	nextDops := cr.dops
 	providerChanged := false

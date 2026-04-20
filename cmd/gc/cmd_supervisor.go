@@ -1114,6 +1114,7 @@ func reconcileCities(
 			fmt.Fprintf(stderr, "gc supervisor: city '%s': using registered name; city.toml workspace.name is %q\n", //nolint:errcheck
 				cityName, liveName)
 		}
+		applyRuntimeCityIdentity(cfg, cityName)
 
 		// Track initialization progress for the API.
 		cr.BatchUpdate(func(

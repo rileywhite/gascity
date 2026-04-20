@@ -136,13 +136,28 @@ func doConfigShow(validate, showProvenance bool, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	data, err := cfg.Marshal()
+	data, err := configForDisplay(cfg).Marshal()
 	if err != nil {
 		fmt.Fprintf(stderr, "gc config show: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 	fmt.Fprint(stdout, string(data)) //nolint:errcheck // best-effort stdout
 	return 0
+}
+
+func configForDisplay(cfg *config.City) *config.City {
+	if cfg == nil {
+		return nil
+	}
+	clone := *cfg
+	clone.Workspace = cfg.Workspace
+	if strings.TrimSpace(clone.Workspace.Name) == "" {
+		clone.Workspace.Name = config.EffectiveCityName(cfg, "")
+	}
+	if strings.TrimSpace(clone.Workspace.Prefix) == "" {
+		clone.Workspace.Prefix = strings.TrimSpace(cfg.ResolvedWorkspacePrefix)
+	}
+	return &clone
 }
 
 func newConfigExplainCmd(stdout, stderr io.Writer) *cobra.Command {

@@ -1592,6 +1592,96 @@ func TestCityRuntimeReloadSameRevisionIsNoOp(t *testing.T) {
 	}
 }
 
+func TestNewCityRuntimeUsesRegisteredAliasForEffectiveIdentity(t *testing.T) {
+	cityPath := t.TempDir()
+	tomlPath := filepath.Join(cityPath, "city.toml")
+	writeCityRuntimeConfigNamed(t, tomlPath, "declared-city", "fake")
+
+	cfg, _, err := config.LoadWithIncludes(fsys.OSFS{}, tomlPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	sp := runtime.NewFake()
+	cr := newCityRuntime(CityRuntimeParams{
+		CityPath: cityPath,
+		CityName: "machine-alias",
+		TomlPath: tomlPath,
+		Cfg:      cfg,
+		SP:       sp,
+		BuildFn: func(*config.City, runtime.Provider, beads.Store) DesiredStateResult {
+			return DesiredStateResult{State: map[string]TemplateParams{}}
+		},
+		Dops:   newDrainOps(sp),
+		Rec:    events.Discard,
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+
+	if got := cr.cfg.EffectiveCityName(); got != "machine-alias" {
+		t.Fatalf("EffectiveCityName() = %q, want %q", got, "machine-alias")
+	}
+	if got := config.EffectiveHQPrefix(cr.cfg); got != "ma" {
+		t.Fatalf("EffectiveHQPrefix() = %q, want %q", got, "ma")
+	}
+	if got := cr.cfg.Workspace.Name; got != "declared-city" {
+		t.Fatalf("Workspace.Name = %q, want %q", got, "declared-city")
+	}
+}
+
+func TestCityRuntimeReloadKeepsRegisteredAliasForEffectiveIdentity(t *testing.T) {
+	cityPath := t.TempDir()
+	tomlPath := filepath.Join(cityPath, "city.toml")
+	writeCityRuntimeConfigNamed(t, tomlPath, "declared-city", "fake")
+
+	cfg, prov, err := config.LoadWithIncludes(fsys.OSFS{}, tomlPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	configRev := config.Revision(fsys.OSFS{}, prov, cfg, cityPath)
+
+	sp := runtime.NewFake()
+	cr := newCityRuntime(CityRuntimeParams{
+		CityPath:  cityPath,
+		CityName:  "machine-alias",
+		TomlPath:  tomlPath,
+		ConfigRev: configRev,
+		Cfg:       cfg,
+		SP:        sp,
+		BuildFn: func(*config.City, runtime.Provider, beads.Store) DesiredStateResult {
+			return DesiredStateResult{State: map[string]TemplateParams{}}
+		},
+		Dops:   newDrainOps(sp),
+		Rec:    events.Discard,
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if err := os.WriteFile(tomlPath, append(data, []byte("\n# reload\n")...), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	lastProviderName := "fake"
+	cr.reloadConfig(context.Background(), &lastProviderName, cityPath)
+
+	if got := cr.cfg.EffectiveCityName(); got != "machine-alias" {
+		t.Fatalf("EffectiveCityName() after reload = %q, want %q", got, "machine-alias")
+	}
+	if got := config.EffectiveHQPrefix(cr.cfg); got != "ma" {
+		t.Fatalf("EffectiveHQPrefix() after reload = %q, want %q", got, "ma")
+	}
+	if got := cr.cfg.Workspace.Name; got != "declared-city" {
+		t.Fatalf("Workspace.Name after reload = %q, want %q", got, "declared-city")
+	}
+	if cr.configRev == configRev {
+		t.Fatal("configRev did not change after accepted reload")
+	}
+}
+
 func TestCityRuntimeManualReloadReplyWaitsForTickCompletion(t *testing.T) {
 	cityPath := t.TempDir()
 	tomlPath := filepath.Join(cityPath, "city.toml")

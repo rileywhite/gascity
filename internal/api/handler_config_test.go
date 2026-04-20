@@ -86,6 +86,36 @@ func TestHandleConfigGet_UsesEffectiveWorkspaceIdentity(t *testing.T) {
 	}
 }
 
+func TestHandleConfigGet_DerivesPrefixFromRuntimeAliasWhenNoExplicitPrefix(t *testing.T) {
+	fs := newFakeState(t)
+	fs.cityName = "machine-alias"
+	fs.cfg.Workspace.Name = ""
+	fs.cfg.Workspace.Prefix = ""
+	fs.cfg.ResolvedWorkspaceName = "bright-lights"
+	h := newTestCityHandler(t, fs)
+
+	req := httptest.NewRequest("GET", cityURL(fs, "/config"), nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp configResponse
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+
+	if resp.Workspace.Name != "machine-alias" {
+		t.Errorf("workspace.name = %q, want %q", resp.Workspace.Name, "machine-alias")
+	}
+	if resp.Workspace.Prefix != "ma" {
+		t.Errorf("workspace.prefix = %q, want %q", resp.Workspace.Prefix, "ma")
+	}
+	if resp.Workspace.DeclaredPrefix != "" {
+		t.Errorf("workspace.declared_prefix = %q, want empty", resp.Workspace.DeclaredPrefix)
+	}
+}
+
 func TestHandleConfigGet_NoPatches(t *testing.T) {
 	fs := newFakeState(t)
 	h := newTestCityHandler(t, fs)
