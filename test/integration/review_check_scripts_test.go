@@ -175,11 +175,12 @@ func TestReviewCheckScriptsPreferNewestVerdictWhenListOrderIsStale(t *testing.T)
 
 func setupReviewCheckScriptCity(t *testing.T) string {
 	t.Helper()
-	env := newIsolatedCommandEnv(t, true)
+	env := newIsolatedCommandEnv(t, false)
+	env = replaceEnv(env, "GC_BEADS", "file")
 
 	cityDir := filepath.Join(t.TempDir(), "review-check-script-test")
 	configPath := filepath.Join(t.TempDir(), "review-check-script.toml")
-	cityToml := "[workspace]\nname = \"review-check-script-test\"\n\n[session]\nprovider = \"subprocess\"\n"
+	cityToml := "[workspace]\nname = \"review-check-script-test\"\n\n[beads]\nprovider = \"file\"\n\n[session]\nprovider = \"subprocess\"\n"
 	if err := os.WriteFile(configPath, []byte(cityToml), 0o644); err != nil {
 		t.Fatalf("writing config: %v", err)
 	}
@@ -204,12 +205,15 @@ func setupReviewCheckScriptCity(t *testing.T) string {
 			t.Fatalf("writing %s: %v", dst, err)
 		}
 	}
-	initCityWithManagedDoltRecovery(t, env, configPath, cityDir)
+	out, err := runGCWithEnv(env, "", "init", "--skip-provider-readiness", "--file", configPath, cityDir)
+	if err != nil {
+		t.Fatalf("gc init failed: %v\noutput: %s", err, out)
+	}
 	registerCityCommandEnv(cityDir, env)
 	t.Cleanup(func() {
 		unregisterCityCommandEnv(cityDir)
-		runGCDoltWithEnv(env, "", "stop", cityDir)                //nolint:errcheck
-		runGCDoltWithEnv(env, "", "supervisor", "stop", "--wait") //nolint:errcheck
+		runGCWithEnv(env, "", "stop", cityDir)                //nolint:errcheck
+		runGCWithEnv(env, "", "supervisor", "stop", "--wait") //nolint:errcheck
 	})
 
 	return cityDir
@@ -218,7 +222,7 @@ func setupReviewCheckScriptCity(t *testing.T) string {
 func createJSONBead(t *testing.T, cityDir, title string) string {
 	t.Helper()
 
-	out, err := bdDolt(cityDir, "create", "--json", title)
+	out, err := bd(cityDir, "create", "--json", title)
 	if err != nil {
 		t.Fatalf("bd create failed: %v\noutput: %s", err, out)
 	}
@@ -236,7 +240,7 @@ func updateBeadMetadata(t *testing.T, cityDir, beadID string, pairs ...string) {
 	for _, pair := range pairs {
 		args = append(args, "--set-metadata", pair)
 	}
-	out, err := bdDolt(cityDir, args...)
+	out, err := bd(cityDir, args...)
 	if err != nil {
 		t.Fatalf("bd update %s failed: %v\noutput: %s", beadID, err, out)
 	}
@@ -245,26 +249,22 @@ func updateBeadMetadata(t *testing.T, cityDir, beadID string, pairs ...string) {
 func checkScriptEnv(t *testing.T, cityDir, beadID string) []string {
 	t.Helper()
 
-	env := commandEnvForDir(cityDir, true)
+	env := commandEnvForDir(cityDir, false)
 	env = filterEnvMany(env,
 		"GC_BEAD_ID",
+		"GC_BEADS",
 		"GC_CITY",
 		"GC_CITY_PATH",
 		"GC_CITY_ROOT",
 		"GC_CITY_RUNTIME_DIR",
-		"GC_DOLT_PORT",
 	)
 	env = append(env,
 		"GC_BEAD_ID="+beadID,
+		"GC_BEADS=file",
 		"GC_CITY="+cityDir,
 		"GC_CITY_PATH="+cityDir,
 		"GC_CITY_RUNTIME_DIR="+filepath.Join(cityDir, ".gc", "runtime"),
 	)
-	if port, ok := ensureManagedDoltPortForTest(cityDir); ok {
-		env = append(env, "GC_DOLT_PORT="+port)
-	} else {
-		t.Fatalf("managed Dolt port did not become ready for %s", cityDir)
-	}
 	return env
 }
 
