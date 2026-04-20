@@ -66,35 +66,16 @@ type OrderCheckListOutput struct {
 func (s *Server) humaHandleOrderCheck(_ context.Context, _ *OrderCheckInput) (*OrderCheckListOutput, error) {
 	aa := s.state.Orders()
 
-	store := s.state.CityBeadStore()
-	lastRunFn := beadLastRunFunc(store)
 	ep := s.state.EventProvider()
-
-	var cursorFn orders.CursorFunc
-	if store != nil {
-		cursorFn = func(name string) uint64 {
-			label := "order-run:" + name
-			results, err := store.List(beads.ListQuery{
-				Label:         label,
-				Limit:         10,
-				IncludeClosed: true,
-				Sort:          beads.SortCreatedDesc,
-			})
-			if err != nil || len(results) == 0 {
-				return 0
-			}
-			var labelSets [][]string
-			for _, b := range results {
-				labelSets = append(labelSets, b.Labels)
-			}
-			return orders.MaxSeqFromLabels(labelSets)
-		}
-	}
 
 	now := time.Now()
 	checks := make([]orderCheckResponse, 0, len(aa))
 	for _, a := range aa {
-		result := orders.CheckTrigger(a, now, lastRunFn, ep, cursorFn)
+		stores, err := orders.StoresForState(s.state, a)
+		if err != nil {
+			return nil, huma.Error500InternalServerError(err.Error())
+		}
+		result := orders.CheckTrigger(a, now, orders.LastRunAcrossStores(stores...), ep, orders.CursorAcrossStores(stores...))
 		cr := orderCheckResponse{
 			Name:       a.Name,
 			ScopedName: a.ScopedName(),
@@ -106,18 +87,10 @@ func (s *Server) humaHandleOrderCheck(_ context.Context, _ *OrderCheckInput) (*O
 			ts := result.LastRun.Format(time.RFC3339)
 			cr.LastRun = &ts
 		}
-		if store != nil {
-			label := "order-run:" + a.ScopedName()
-			if results, err := store.List(beads.ListQuery{
-				Label:         label,
-				Limit:         1,
-				IncludeClosed: true,
-				Sort:          beads.SortCreatedDesc,
-			}); err == nil && len(results) > 0 {
-				outcome := lastRunOutcomeFromLabels(results[0].Labels)
-				if outcome != "" {
-					cr.LastRunOutcome = &outcome
-				}
+		if results, err := orders.HistoryBeadsAcrossStores(stores, a.ScopedName()); err == nil && len(results) > 0 {
+			outcome := lastRunOutcomeFromLabels(results[0].Labels)
+			if outcome != "" {
+				cr.LastRunOutcome = &outcome
 			}
 		}
 		checks = append(checks, cr)
@@ -155,11 +128,6 @@ type OrderHistoryListOutput struct {
 
 // humaHandleOrderHistory is the Huma-typed handler for GET /v0/orders/history.
 func (s *Server) humaHandleOrderHistory(_ context.Context, input *OrderHistoryInput) (*OrderHistoryListOutput, error) {
-	store := s.state.CityBeadStore()
-	if store == nil {
-		return nil, huma.Error503ServiceUnavailable("no bead store configured")
-	}
-
 	scopedName := input.ScopedName
 	if scopedName == "" {
 		return nil, huma.Error400BadRequest("scoped_name is required")
@@ -181,24 +149,27 @@ func (s *Server) humaHandleOrderHistory(_ context.Context, input *OrderHistoryIn
 
 	aa := s.state.Orders()
 	var auto *orders.Order
+	var orderDef orders.Order
 	for i, a := range aa {
 		if a.ScopedName() == scopedName {
 			auto = &aa[i]
+			orderDef = aa[i]
 			break
 		}
 	}
-
-	label := "order-run:" + scopedName
-	fetchLimit := limit
-	if !beforeTime.IsZero() {
-		fetchLimit = limit * 3
+	if auto == nil {
+		orderDef = orders.Order{Name: scopedName}
+		if idx := strings.Index(scopedName, ":rig:"); idx >= 0 {
+			orderDef.Name = scopedName[:idx]
+			orderDef.Rig = scopedName[idx+5:]
+		}
 	}
-	results, err := store.List(beads.ListQuery{
-		Label:         label,
-		Limit:         fetchLimit,
-		IncludeClosed: true,
-		Sort:          beads.SortCreatedDesc,
-	})
+	stores, err := orders.StoresForState(s.state, orderDef)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+
+	results, err := orders.HistoryBeadsAcrossStores(stores, scopedName)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
@@ -273,12 +244,14 @@ func (s *Server) humaHandleOrderHistoryDetail(_ context.Context, input *OrderHis
 	Body orderHistoryDetailResponse
 }, error,
 ) {
-	store := s.state.CityBeadStore()
-	if store == nil {
-		return nil, huma.Error503ServiceUnavailable("no bead store configured")
+	storeInfos := workflowStores(s.state)
+	stores := make([]beads.Store, 0, len(storeInfos))
+	for _, info := range storeInfos {
+		if info.store != nil {
+			stores = append(stores, info.store)
+		}
 	}
-
-	b, err := store.Get(input.BeadID)
+	b, err := orders.HistoryBeadAcrossStores(stores, input.BeadID)
 	if err != nil {
 		if errors.Is(err, beads.ErrNotFound) {
 			return nil, huma.Error404NotFound("bead not found")
@@ -363,11 +336,11 @@ func (s *Server) humaHandleOrdersFeed(_ context.Context, input *OrdersFeedInput)
 		return nil, huma.Error500InternalServerError("order feed failed")
 	}
 
-	items := make([]monitorFeedItemResponse, 0, len(workflowRuns.Items)+len(orderRuns))
+	items := make([]monitorFeedItemResponse, 0, len(workflowRuns.Items)+len(orderRuns.Items))
 	for _, run := range workflowRuns.Items {
 		items = append(items, workflowRunProjectionFeedItem(run))
 	}
-	items = append(items, orderRuns...)
+	items = append(items, orderRuns.Items...)
 
 	sort.SliceStable(items, func(i, j int) bool {
 		iRank := monitorStatusRank(items[i].Status)
@@ -394,17 +367,31 @@ func (s *Server) humaHandleOrdersFeed(_ context.Context, input *OrdersFeedInput)
 
 	body := ordersFeedBody{
 		Items:   items,
-		Partial: workflowRuns.Partial,
+		Partial: workflowRuns.Partial || orderRuns.Partial,
 	}
-	if len(workflowRuns.PartialErrors) > 0 {
-		body.PartialErrors = workflowRuns.PartialErrors
-	}
+	body.PartialErrors = appendUniqueStrings(body.PartialErrors, workflowRuns.PartialErrors...)
+	body.PartialErrors = appendUniqueStrings(body.PartialErrors, orderRuns.PartialErrors...)
 
 	s.storeResponse(cacheKey, index, body)
 
 	return &struct {
 		Body ordersFeedBody
 	}{Body: body}, nil
+}
+
+func appendUniqueStrings(dst []string, values ...string) []string {
+	seen := make(map[string]bool, len(dst))
+	for _, value := range dst {
+		seen[value] = true
+	}
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		dst = append(dst, value)
+	}
+	return dst
 }
 
 func (s *Server) setOrderEnabledHuma(name string, enabled bool) (*OKResponse, error) {

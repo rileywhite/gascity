@@ -1,8 +1,10 @@
 package orders
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/gastownhall/gascity/internal/fsys"
@@ -72,7 +74,10 @@ func warnDeprecatedPath(opts ScanOptions, format string, args ...any) {
 func discoverFlatFiles(fs fsys.FS, dir string, found map[string]Order, add func(name, source string, data []byte) error, opts ScanOptions) error {
 	entries, err := fs.ReadDir(dir)
 	if err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading order root %s: %w", dir, err)
 	}
 	// Two-pass scan: canonical .toml files win over legacy .order.toml files
 	// regardless of ReadDir ordering. A legacy file is only consumed if no
@@ -98,6 +103,9 @@ func discoverFlatFiles(fs fsys.FS, dir string, found map[string]Order, add func(
 			source := filepath.Join(dir, fileName)
 			data, err := fs.ReadFile(source)
 			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					warnUnreadablePath(opts, "warning: unreadable order path %s: %v", source, err)
+				}
 				continue
 			}
 			if legacy {
@@ -118,7 +126,10 @@ func discoverFlatFiles(fs fsys.FS, dir string, found map[string]Order, add func(
 func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, add func(name, source string, data []byte) error) error {
 	entries, err := fs.ReadDir(dir)
 	if err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading order root %s: %w", dir, err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -131,6 +142,9 @@ func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, 
 		source := filepath.Join(dir, name, orderFileName)
 		data, err := fs.ReadFile(source)
 		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				warnUnreadablePath(ScanOptions{}, "warning: unreadable order path %s: %v", source, err)
+			}
 			continue
 		}
 		if err := add(name, source, data); err != nil {
@@ -138,6 +152,13 @@ func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, 
 		}
 	}
 	return nil
+}
+
+func warnUnreadablePath(opts ScanOptions, format string, args ...any) {
+	if opts.SuppressDeprecatedPathWarnings {
+		return
+	}
+	log.Printf(format, args...)
 }
 
 func legacyOrdersDir(formulaLayer string) string {
