@@ -364,6 +364,71 @@ func TestRigUnregisterNotFound(t *testing.T) {
 	}
 }
 
+func TestRegistryMutatorsRefuseHostRegistryDuringTests(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	hostRegistry := filepath.Join(home, ".gc", "cities.toml")
+	r := NewRegistry(hostRegistry)
+
+	tests := []struct {
+		name string
+		call func(*Registry)
+	}{
+		{
+			name: "Register",
+			call: func(r *Registry) {
+				_ = r.Register(filepath.Join(home, "cities", "alpha"), "alpha")
+			},
+		},
+		{
+			name: "Unregister",
+			call: func(r *Registry) {
+				_ = r.Unregister(filepath.Join(home, "cities", "alpha"))
+			},
+		},
+		{
+			name: "RegisterRig",
+			call: func(r *Registry) {
+				_ = r.RegisterRig(filepath.Join(home, "rigs", "alpha"), "alpha", "")
+			},
+		},
+		{
+			name: "UnregisterRig",
+			call: func(r *Registry) {
+				_ = r.UnregisterRig(filepath.Join(home, "rigs", "alpha"))
+			},
+		},
+		{
+			name: "SetRigDefault",
+			call: func(r *Registry) {
+				_ = r.SetRigDefault(filepath.Join(home, "rigs", "alpha"), filepath.Join(home, "cities", "alpha"))
+			},
+		},
+		{
+			name: "ReconcileRigs",
+			call: func(r *Registry) {
+				_ = r.ReconcileRigs([]RigCityMapping{{
+					RigPath:  filepath.Join(home, "rigs", "alpha"),
+					RigName:  "alpha",
+					CityPath: filepath.Join(home, "cities", "alpha"),
+				}})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					t.Fatalf("expected panic for %s against host registry path", tc.name)
+				}
+			}()
+			tc.call(r)
+		})
+	}
+}
+
 func TestRigLookupByPath(t *testing.T) {
 	dir := t.TempDir()
 	r := NewRegistry(filepath.Join(dir, "cities.toml"))

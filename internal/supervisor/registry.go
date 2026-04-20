@@ -59,6 +59,18 @@ func NewRegistry(path string) *Registry {
 	return &Registry{path: path}
 }
 
+func (r *Registry) refuseHostRegistryDuringTests() {
+	if !isTestBinary() {
+		return
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		hostRegistry := filepath.Join(home, ".gc")
+		if strings.HasPrefix(r.path, hostRegistry+string(filepath.Separator)) || r.path == hostRegistry {
+			panic("supervisor.Registry: refusing to write to host registry during tests")
+		}
+	}
+}
+
 // List returns all registered cities. Returns an empty slice (not nil)
 // if the file doesn't exist or is empty.
 func (r *Registry) List() ([]CityEntry, error) {
@@ -74,15 +86,7 @@ func (r *Registry) List() ([]CityEntry, error) {
 // a different city with the same effective name is already registered.
 // Uses file-level locking for cross-process safety.
 func (r *Registry) Register(cityPath, effectiveName string) error {
-	// Guard: refuse to write to the host registry during tests.
-	if isTestBinary() {
-		if home, err := os.UserHomeDir(); err == nil {
-			hostRegistry := filepath.Join(home, ".gc")
-			if strings.HasPrefix(r.path, hostRegistry+string(filepath.Separator)) || r.path == hostRegistry {
-				panic("supervisor.Registry.Register: refusing to write to host registry during tests")
-			}
-		}
-	}
+	r.refuseHostRegistryDuringTests()
 
 	abs, err := filepath.Abs(cityPath)
 	if err != nil {
@@ -140,6 +144,8 @@ func (r *Registry) Register(cityPath, effectiveName string) error {
 // error if the city is not registered. The path is resolved to
 // absolute before comparison. Uses file-level locking for cross-process safety.
 func (r *Registry) Unregister(cityPath string) error {
+	r.refuseHostRegistryDuringTests()
+
 	abs, err := filepath.Abs(cityPath)
 	if err != nil {
 		return fmt.Errorf("resolving path: %w", err)
@@ -287,6 +293,8 @@ func (r *Registry) ListRigs() ([]RigEntry, error) {
 // already exists, the entry is updated. Uses file-level locking for
 // cross-process safety.
 func (r *Registry) RegisterRig(rigPath, name, defaultCity string) error {
+	r.refuseHostRegistryDuringTests()
+
 	abs, err := resolveAbsPath(rigPath)
 	if err != nil {
 		return err
@@ -345,6 +353,8 @@ func (r *Registry) RegisterRig(rigPath, name, defaultCity string) error {
 // UnregisterRig removes a rig from the registry by path. Returns an error
 // if the rig is not registered. Uses file-level locking for cross-process safety.
 func (r *Registry) UnregisterRig(rigPath string) error {
+	r.refuseHostRegistryDuringTests()
+
 	abs, err := resolveAbsPath(rigPath)
 	if err != nil {
 		return err
@@ -430,6 +440,8 @@ func (r *Registry) LookupRigByName(name string) (RigEntry, bool) {
 // SetRigDefault sets the default city for a rig. The rig must already be
 // registered. Uses file-level locking for cross-process safety.
 func (r *Registry) SetRigDefault(rigPath, defaultCity string) error {
+	r.refuseHostRegistryDuringTests()
+
 	abs, err := resolveAbsPath(rigPath)
 	if err != nil {
 		return err
@@ -464,6 +476,8 @@ func (r *Registry) SetRigDefault(rigPath, defaultCity string) error {
 // default_city if the referenced city no longer contains the rig. Removes
 // rig entries that no longer belong to any city.
 func (r *Registry) ReconcileRigs(rigCityMap []RigCityMapping) error {
+	r.refuseHostRegistryDuringTests()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
