@@ -15,9 +15,18 @@ type sessionRuntimeTarget struct {
 	sessionName string
 }
 
+func defaultSessionDisplayIdentity() string {
+	for _, key := range []string{"GC_ALIAS", "GC_SESSION_ID", "GC_AGENT"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func currentSessionRuntimeTarget() (sessionRuntimeTarget, error) {
-	display := defaultMailIdentity()
-	if display == "human" {
+	display := defaultSessionDisplayIdentity()
+	if display == "" {
 		return sessionRuntimeTarget{}, fmt.Errorf("not in session context (GC_ALIAS/GC_SESSION_ID not set)")
 	}
 	sessionName := strings.TrimSpace(os.Getenv("GC_TMUX_SESSION"))

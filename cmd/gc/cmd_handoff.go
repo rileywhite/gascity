@@ -105,10 +105,20 @@ func cmdHandoffRemote(args []string, target string, stdout, stderr io.Writer) in
 	if store == nil {
 		return code
 	}
+	cityPath, err := resolveCity()
+	if err != nil {
+		fmt.Fprintf(stderr, "gc handoff: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	cfg, _ := loadCityConfig(cityPath, stderr)
+	sender, ok := resolveDefaultMailSenderForCommand(cityPath, cfg, store, stderr, "gc handoff")
+	if !ok {
+		return 1
+	}
 
 	sp := newSessionProvider()
 	rec := openCityRecorder(stderr)
-	return doHandoffRemote(store, rec, sp, targetInfo.sessionName, targetInfo.display, defaultMailIdentity(), args, stdout, stderr)
+	return doHandoffRemote(store, rec, sp, targetInfo.sessionName, targetInfo.display, sender, args, stdout, stderr)
 }
 
 func sessionRestartPersister(cityPath string, store beads.Store, sp runtime.Provider, cfg *config.City, target string) func() error {

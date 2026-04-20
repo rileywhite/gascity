@@ -13,6 +13,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/session"
 )
 
 func TestHandoffSuccess(t *testing.T) {
@@ -531,5 +532,78 @@ func TestHandoffRemoteNotRunning(t *testing.T) {
 	// Stdout mentions not running.
 	if !strings.Contains(stdout.String(), "not running") {
 		t.Errorf("stdout = %q, want 'not running' mention", stdout.String())
+	}
+}
+
+func TestCmdHandoffRemoteDefaultSenderFallsBackToGCAliasWhenSessionIDMissing(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_MAIL", "")
+
+	cityPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(city.toml): %v", err)
+	}
+	t.Setenv("GC_CITY", cityPath)
+
+	store, err := openCityStoreAt(cityPath)
+	if err != nil {
+		t.Fatalf("openCityStoreAt: %v", err)
+	}
+	if _, err := store.Create(beads.Bead{
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"alias":        "sender",
+			"session_name": "sender-gc-42",
+		},
+	}); err != nil {
+		t.Fatalf("Create sender: %v", err)
+	}
+	if _, err := store.Create(beads.Bead{
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"alias":        "recipient",
+			"session_name": "recipient-gc-42",
+		},
+	}); err != nil {
+		t.Fatalf("Create recipient: %v", err)
+	}
+
+	t.Setenv("GC_SESSION_ID", "gc-does-not-match")
+	t.Setenv("GC_ALIAS", "sender")
+	_ = os.Unsetenv("GC_AGENT")
+
+	var stdout, stderr bytes.Buffer
+	code := cmdHandoffRemote([]string{"Context refresh", "Check current state"}, "recipient", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("cmdHandoffRemote() = %d, want 0; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	storeAfter, err := openCityStoreAt(cityPath)
+	if err != nil {
+		t.Fatalf("openCityStoreAt after handoff: %v", err)
+	}
+	all, err := storeAfter.ListOpen()
+	if err != nil {
+		t.Fatalf("ListOpen: %v", err)
+	}
+	var msg beads.Bead
+	found := false
+	for _, b := range all {
+		if b.Type == "message" {
+			msg = b
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("message bead not found; beads=%#v", all)
+	}
+	if msg.From != "sender" {
+		t.Fatalf("message From = %q, want sender", msg.From)
+	}
+	if msg.Assignee != "recipient" {
+		t.Fatalf("message Assignee = %q, want recipient", msg.Assignee)
 	}
 }

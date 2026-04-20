@@ -1178,8 +1178,8 @@ Check for unread mail addressed to a session alias or mailbox.
 
 Without --inject: prints the count and exits 0 if mail exists, 1 if
 empty. With --inject: outputs a &lt;system-reminder&gt; block suitable for
-hook injection (always exits 0). The recipient defaults to $GC_ALIAS,
-$GC_SESSION_ID, or "human".
+hook injection (always exits 0). The recipient defaults to $GC_SESSION_ID,
+$GC_ALIAS, $GC_AGENT, or "human".
 
 ```
 gc mail check [session] [flags]
@@ -1201,7 +1201,7 @@ gc mail check
 ## gc mail count
 
 Show total and unread message counts for a session alias or human.
-The recipient defaults to $GC_ALIAS, $GC_SESSION_ID, or "human".
+The recipient defaults to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human".
 
 ```
 gc mail count [session]
@@ -1220,7 +1220,7 @@ gc mail delete <id>
 List all unread messages for a session alias or human.
 
 Shows message ID, sender, subject, and body in a table. The recipient defaults
-to $GC_ALIAS, $GC_SESSION_ID, or "human". Pass a session alias to view another inbox.
+to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Pass a session alias to view another inbox.
 
 ```
 gc mail inbox [session]
@@ -1286,7 +1286,7 @@ gc mail reply <id> [-s subject] [-m body] [flags]
 Send a message to a session alias or human.
 
 Creates a message bead addressed to the recipient. The sender defaults
-to $GC_ALIAS or $GC_SESSION_ID (in sessions) or "human". Use --notify to nudge
+to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Use --notify to nudge
 the recipient after sending. Use --from to override the sender identity.
 Use --to as an alternative to the positional &lt;to&gt; argument.
 Use -s/--subject for the summary line and -m/--message for the body text.
@@ -1311,7 +1311,7 @@ gc mail send mayor "Build is green"
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--all` | bool |  | broadcast to all live sessions (excludes sender and human) |
-| `--from` | string |  | sender identity (default: $GC_ALIAS, $GC_SESSION_ID, or "human") |
+| `--from` | string |  | sender identity (default: $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human") |
 | `-m`, `--message` | string |  | message body text |
 | `--notify` | bool |  | nudge the recipient after sending |
 | `-s`, `--subject` | string |  | message subject line |

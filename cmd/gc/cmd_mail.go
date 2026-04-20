@@ -138,8 +138,8 @@ func newMailCheckCmd(stdout, stderr io.Writer) *cobra.Command {
 
 Without --inject: prints the count and exits 0 if mail exists, 1 if
 empty. With --inject: outputs a <system-reminder> block suitable for
-hook injection (always exits 0). The recipient defaults to $GC_ALIAS,
-$GC_SESSION_ID, or "human".`,
+hook injection (always exits 0). The recipient defaults to $GC_SESSION_ID,
+$GC_ALIAS, $GC_AGENT, or "human".`,
 		Example: `  gc mail check
   gc mail check --inject
   gc mail check mayor`,
@@ -251,10 +251,9 @@ func defaultMailIdentity() string {
 }
 
 // defaultMailIdentityCandidates returns ordered non-empty identity candidates
-// (GC_ALIAS, GC_SESSION_ID, GC_AGENT), falling back to ["human"] when all are
-// unset. Multiple candidates matter for pool workers where GC_ALIAS may be a
-// pool-instance qualified name absent from the session bead's metadata while
-// GC_SESSION_ID still matches via session_name.
+// (GC_SESSION_ID, GC_ALIAS, GC_AGENT), falling back to ["human"] when all are
+// unset. Multiple candidates preserve compatibility for sessions whose concrete
+// ID is unavailable while still preferring the concrete mailbox when it exists.
 func defaultMailIdentityCandidates() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -266,8 +265,8 @@ func defaultMailIdentityCandidates() []string {
 		seen[v] = true
 		out = append(out, v)
 	}
-	add(os.Getenv("GC_ALIAS"))
 	add(os.Getenv("GC_SESSION_ID"))
+	add(os.Getenv("GC_ALIAS"))
 	add(os.Getenv("GC_AGENT"))
 	if len(out) == 0 {
 		out = append(out, "human")
@@ -720,7 +719,7 @@ func newMailSendCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `Send a message to a session alias or human.
 
 Creates a message bead addressed to the recipient. The sender defaults
-to $GC_ALIAS or $GC_SESSION_ID (in sessions) or "human". Use --notify to nudge
+to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Use --notify to nudge
 the recipient after sending. Use --from to override the sender identity.
 Use --to as an alternative to the positional <to> argument.
 Use -s/--subject for the summary line and -m/--message for the body text.
@@ -742,7 +741,7 @@ Use --all to broadcast to all live sessions (excluding sender and "human").`,
 	}
 	cmd.Flags().BoolVar(&notify, "notify", false, "nudge the recipient after sending")
 	cmd.Flags().BoolVar(&all, "all", false, "broadcast to all live sessions (excludes sender and human)")
-	cmd.Flags().StringVar(&from, "from", "", "sender identity (default: $GC_ALIAS, $GC_SESSION_ID, or \"human\")")
+	cmd.Flags().StringVar(&from, "from", "", "sender identity (default: $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or \"human\")")
 	cmd.Flags().StringVar(&to, "to", "", "recipient address (alternative to positional argument)")
 	cmd.Flags().StringVarP(&subject, "subject", "s", "", "message subject line")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "message body text")
@@ -757,7 +756,7 @@ func newMailInboxCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `List all unread messages for a session alias or human.
 
 Shows message ID, sender, subject, and body in a table. The recipient defaults
-to $GC_ALIAS, $GC_SESSION_ID, or "human". Pass a session alias to view another inbox.`,
+to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Pass a session alias to view another inbox.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if cmdMailInbox(args, stdout, stderr) != 0 {
@@ -894,7 +893,7 @@ func newMailCountCmd(stdout, stderr io.Writer) *cobra.Command {
 		Use:   "count [session]",
 		Short: "Show total/unread message count",
 		Long: `Show total and unread message counts for a session alias or human.
-The recipient defaults to $GC_ALIAS, $GC_SESSION_ID, or "human".`,
+The recipient defaults to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if cmdMailCount(args, stdout, stderr) != 0 {
@@ -941,9 +940,16 @@ func cmdMailSend(args []string, notify bool, all bool, from string, to string, s
 
 	sender := from
 	if sender == "" {
-		sender = defaultMailIdentity()
-	}
-	if sender != "human" && store != nil {
+		if store != nil {
+			var ok bool
+			sender, ok = resolveDefaultMailSenderForCommand(cityPath, cfg, store, stderr, "gc mail send")
+			if !ok {
+				return 1
+			}
+		} else {
+			sender = defaultMailIdentity()
+		}
+	} else if sender != "human" && store != nil {
 		sender, err = resolveMailIdentityWithConfig(cityPath, cfg, store, sender)
 		if err != nil {
 			fmt.Fprintf(stderr, "gc mail send: invalid sender %q: %v\n", sender, err) //nolint:errcheck // best-effort stderr
