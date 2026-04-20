@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-const processArgsPSTimeout = time.Second
+const (
+	processArgsPSTimeout = time.Second
+	lsofCommandTimeout   = 2 * time.Second
+)
 
 type managedDoltProcessInspection struct {
 	ManagedPID              int
@@ -86,14 +89,14 @@ func findPortHolderPIDFromLsof(port string) int {
 	if _, err := exec.LookPath("lsof"); err != nil {
 		return 0
 	}
-	out, err := lsofOutput(2*time.Second, "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-t")
+	out, err := lsofOutput("-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-t")
 	if err == nil {
 		if pid := pidFromLsofPIDList(string(out)); pid > 0 {
 			return pid
 		}
 	}
 
-	out, err = lsofOutput(2*time.Second, "-nP", "-iTCP:"+port, "-sTCP:LISTEN")
+	out, err = lsofOutput("-nP", "-iTCP:"+port, "-sTCP:LISTEN")
 	if err != nil {
 		return 0
 	}
@@ -215,13 +218,13 @@ func processCWDFromLsof(pid int) (string, bool) {
 	if _, err := exec.LookPath("lsof"); err != nil {
 		return "", false
 	}
-	out, err := lsofOutput(2*time.Second, "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn")
+	out, err := lsofOutput("-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn")
 	if err == nil {
 		if cwd, ok := cwdFromFormattedLsofOutput(string(out)); ok {
 			return cwd, true
 		}
 	}
-	out, err = lsofOutput(2*time.Second, "-a", "-p", strconv.Itoa(pid), "-d", "cwd")
+	out, err = lsofOutput("-a", "-p", strconv.Itoa(pid), "-d", "cwd")
 	if err != nil {
 		return "", false
 	}
@@ -286,7 +289,7 @@ func deletedDataInodeTargetsFromLsof(pid int) []string {
 	if len(targets) > 0 {
 		return targets
 	}
-	out, err := lsofOutput(2*time.Second, "-p", strconv.Itoa(pid))
+	out, err := lsofOutput("-p", strconv.Itoa(pid))
 	if err != nil {
 		return nil
 	}
@@ -294,18 +297,15 @@ func deletedDataInodeTargetsFromLsof(pid int) []string {
 }
 
 func deletedDataInodeTargetsFromFormattedLsof(pid int) []string {
-	out, err := lsofOutput(2*time.Second, "-a", "-p", strconv.Itoa(pid), "+L1", "-Fnk")
+	out, err := lsofOutput("-a", "-p", strconv.Itoa(pid), "+L1", "-Fnk")
 	if err != nil {
 		return nil
 	}
 	return deletedDataInodeTargetsFromFormattedLsofOutput(string(out))
 }
 
-func lsofOutput(timeout time.Duration, args ...string) ([]byte, error) {
-	if timeout <= 0 {
-		timeout = time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func lsofOutput(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), lsofCommandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "lsof", args...)
 	cmd.WaitDelay = 100 * time.Millisecond

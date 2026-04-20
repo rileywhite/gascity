@@ -157,16 +157,6 @@ func Compile(_ context.Context, name string, searchPaths []string, vars map[stri
 	return toRecipeWithGraph(resolved, graphWorkflow)
 }
 
-// toRecipe converts a resolved Formula into a Recipe by flattening the
-// step tree into an ordered list with namespaced IDs and dependency edges.
-func toRecipe(f *Formula) (*Recipe, error) {
-	graphWorkflow, err := isGraphWorkflow(f, IsFormulaV2Enabled())
-	if err != nil {
-		return nil, err
-	}
-	return toRecipeWithGraph(f, graphWorkflow)
-}
-
 func toRecipeWithGraph(f *Formula, graphWorkflow bool) (*Recipe, error) {
 	r := &Recipe{
 		Name:        f.Formula,

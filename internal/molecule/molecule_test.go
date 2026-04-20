@@ -1652,7 +1652,6 @@ timeout = "2m"
 	if !foundIterBlock {
 		t.Fatalf("control bead does not block on iteration bead; deps=%v", controlDeps)
 	}
-
 }
 
 func TestCookEndToEndScopedWorkflowStampsRootAndScopeMetadata(t *testing.T) {

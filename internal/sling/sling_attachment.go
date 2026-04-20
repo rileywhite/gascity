@@ -8,6 +8,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agentutil"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/molecule"
 	"github.com/gastownhall/gascity/internal/sourceworkflow"
 )
 
@@ -147,7 +148,8 @@ func closeAttachedBead(store beads.Store, attached beads.Bead) error {
 		_, err := sourceworkflow.CloseWorkflowSubtree(store, attached.ID)
 		return err
 	}
-	return store.Close(attached.ID)
+	_, err := molecule.CloseSubtree(store, attached.ID)
+	return err
 }
 
 func clearAttachmentMetadata(store beads.Store, parent beads.Bead, attached beads.Bead) error {
