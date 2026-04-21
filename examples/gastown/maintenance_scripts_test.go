@@ -262,68 +262,108 @@ func TestMaintenanceDoltScriptsFallbackToManagedRuntimePortsWithInconclusiveLsof
 		},
 	}
 
-	for _, tt := range scripts {
-		t.Run(tt.name, func(t *testing.T) {
-			cityDir := t.TempDir()
-			binDir := t.TempDir()
-			doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
-
-			listener := listenManagedDoltPort(t)
-			wantPort := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-			writeManagedRuntimeState(t, cityDir, listener.Addr().(*net.TCPAddr).Port)
-
-			writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
-			writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
-exit 0
-`)
-			writeExecutable(t, filepath.Join(binDir, "lsof"), `#!/bin/sh
-exit 0
-`)
-			writeExecutable(t, filepath.Join(binDir, "nc"), `#!/bin/sh
+	cases := []struct {
+		name        string
+		lsofBody    string
+		ncBody      func(port string) string
+		wantManaged bool
+	}{
+		{
+			name:     "inconclusive lsof accepts reachable port",
+			lsofBody: "#!/bin/sh\nexit 0\n",
+			ncBody: func(port string) string {
+				return `#!/bin/sh
 host="$2"
-port="$3"
-if [ "$1" = "-z" ] && [ "$host" = "127.0.0.1" ] && [ "$port" = "`+wantPort+`" ]; then
+probe_port="$3"
+if [ "$1" = "-z" ] && [ "$host" = "127.0.0.1" ] && [ "$probe_port" = "` + port + `" ]; then
   exit 0
 fi
 exit 1
+`
+			},
+			wantManaged: true,
+		},
+		{
+			name:     "mismatched lsof pid still rejects port",
+			lsofBody: "#!/bin/sh\necho $$\nsleep 5\n",
+			ncBody: func(port string) string {
+				return `#!/bin/sh
+exit 0
+`
+			},
+			wantManaged: false,
+		},
+		{
+			name:     "inconclusive lsof with unreachable port still rejects port",
+			lsofBody: "#!/bin/sh\nexit 0\n",
+			ncBody: func(port string) string {
+				return `#!/bin/sh
+exit 1
+`
+			},
+			wantManaged: false,
+		},
+	}
+
+	for _, tt := range scripts {
+		for _, tc := range cases {
+			t.Run(tt.name+"/"+tc.name, func(t *testing.T) {
+				cityDir := t.TempDir()
+				binDir := t.TempDir()
+				doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+
+				listener := listenManagedDoltPort(t)
+				managedPort := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+				wantPort := "3307"
+				if tc.wantManaged {
+					wantPort = managedPort
+				}
+				writeManagedRuntimeState(t, cityDir, listener.Addr().(*net.TCPAddr).Port)
+
+				writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+				writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+exit 0
 `)
+				writeExecutable(t, filepath.Join(binDir, "lsof"), tc.lsofBody)
+				writeExecutable(t, filepath.Join(binDir, "nc"), tc.ncBody(managedPort))
 
-			env := map[string]string{
-				"DOLT_ARGS_LOG":       doltLog,
-				"GC_CITY":             cityDir,
-				"GC_CITY_PATH":        cityDir,
-				"GC_DOLT_HOST":        "",
-				"GC_DOLT_PORT":        "",
-				"GC_DOLT_USER":        "",
-				"GC_DOLT_PASSWORD":    "",
-				"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
-				"GIT_CONFIG_NOSYSTEM": "1",
-				"PATH":                binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-			}
-			for key, value := range tt.env {
-				if key == "GC_JSONL_ARCHIVE_REPO" {
-					value = filepath.Join(cityDir, value)
+				env := map[string]string{
+					"DOLT_ARGS_LOG":       doltLog,
+					"GC_CITY":             cityDir,
+					"GC_CITY_PATH":        cityDir,
+					"GC_DOLT_HOST":        "",
+					"GC_DOLT_PORT":        "",
+					"GC_DOLT_USER":        "",
+					"GC_DOLT_PASSWORD":    "",
+					"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
+					"GIT_CONFIG_NOSYSTEM": "1",
+					"PATH":                binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				}
-				env[key] = value
-			}
-
-			runScript(t, filepath.Join(exampleDir(), tt.script), env)
-
-			logData, err := os.ReadFile(doltLog)
-			if err != nil {
-				t.Fatalf("ReadFile(dolt log): %v", err)
-			}
-			log := string(logData)
-			for _, want := range []string{
-				"--host 127.0.0.1",
-				"--port " + wantPort,
-				"--user root",
-			} {
-				if !strings.Contains(log, want) {
-					t.Fatalf("dolt calls missing %q:\n%s", want, log)
+				for key, value := range tt.env {
+					if key == "GC_JSONL_ARCHIVE_REPO" {
+						value = filepath.Join(cityDir, value)
+					}
+					env[key] = value
 				}
-			}
-		})
+
+				runScript(t, filepath.Join(exampleDir(), tt.script), env)
+
+				logData, err := os.ReadFile(doltLog)
+				if err != nil {
+					t.Fatalf("ReadFile(dolt log): %v", err)
+				}
+				log := string(logData)
+				for _, want := range []string{
+					"--host 127.0.0.1",
+					"--port " + wantPort,
+					"--user root",
+				} {
+					if !strings.Contains(log, want) {
+						t.Fatalf("dolt calls missing %q:\n%s", want, log)
+					}
+				}
+			})
+		}
 	}
 }
 
