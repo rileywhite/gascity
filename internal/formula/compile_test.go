@@ -1018,6 +1018,41 @@ extends = ["standalone-parent-a", "standalone-parent-b"]
 	}
 }
 
+func TestCompileStandaloneExpansionAllowsConditionallyExclusiveDuplicateTemplateIDs(t *testing.T) {
+	enableV2ForTest(t)
+
+	dir := t.TempDir()
+	formulaText := `
+formula = "standalone-expansion-conditional"
+type = "expansion"
+version = 2
+
+[[template]]
+id = "{target}.attempt"
+title = "Fast attempt"
+condition = "{{mode}} == fast"
+
+[[template]]
+id = "{target}.attempt"
+title = "Slow attempt"
+condition = "{{mode}} == slow"
+`
+	if err := os.WriteFile(filepath.Join(dir, "standalone-expansion-conditional.toml"), []byte(formulaText), 0o644); err != nil {
+		t.Fatalf("write formula: %v", err)
+	}
+
+	recipe, err := Compile(context.Background(), "standalone-expansion-conditional", []string{dir}, map[string]string{"mode": "fast"})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(recipe.Steps) != 2 {
+		t.Fatalf("len(recipe.Steps) = %d, want 2", len(recipe.Steps))
+	}
+	if got := recipe.Steps[1].ID; got != "standalone-expansion-conditional.main.attempt" {
+		t.Fatalf("recipe.Steps[1].ID = %q, want standalone-expansion-conditional.main.attempt", got)
+	}
+}
+
 func formatDepsForCleanup(deps []RecipeDep, stepID string) string {
 	var lines []string
 	for _, d := range deps {

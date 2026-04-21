@@ -128,6 +128,11 @@ func Compile(_ context.Context, name string, searchPaths []string, vars map[stri
 		if err := MaterializeExpansion(resolved, "main", expansionVars); err != nil {
 			return nil, fmt.Errorf("standalone expansion %q: %w", name, err)
 		}
+		filteredSteps, err := FilterStepsByCondition(resolved.Steps, expansionVars)
+		if err != nil {
+			return nil, fmt.Errorf("filtering conditioned steps in standalone expansion %q: %w", name, err)
+		}
+		resolved.Steps = filteredSteps
 	}
 
 	// Stage 10: Expand inline retry-managed steps.

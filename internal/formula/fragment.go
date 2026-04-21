@@ -46,6 +46,11 @@ func CompileExpansionFragment(_ context.Context, name string, searchPaths []stri
 	if err := MaterializeExpansionForTarget(resolved, target, expansionVars); err != nil {
 		return nil, err
 	}
+	filteredSteps, err := FilterStepsByCondition(resolved.Steps, expansionVars)
+	if err != nil {
+		return nil, fmt.Errorf("filtering conditioned steps in expansion %q: %w", name, err)
+	}
+	resolved.Steps = filteredSteps
 
 	controlFlowSteps, err := ApplyControlFlow(resolved.Steps, resolved.Compose)
 	if err != nil {
@@ -87,7 +92,7 @@ func CompileExpansionFragment(_ context.Context, name string, searchPaths []stri
 		}
 	}
 
-	filteredSteps, err := FilterStepsByCondition(resolved.Steps, expansionVars)
+	filteredSteps, err = FilterStepsByCondition(resolved.Steps, expansionVars)
 	if err != nil {
 		return nil, fmt.Errorf("filtering conditioned steps in expansion %q: %w", name, err)
 	}

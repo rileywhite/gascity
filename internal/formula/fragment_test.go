@@ -259,6 +259,42 @@ extends = ["fragment-parent-a", "fragment-parent-b"]
 	}
 }
 
+func TestCompileExpansionFragmentAllowsConditionallyExclusiveDuplicateTemplateIDs(t *testing.T) {
+	enableV2ForTest(t)
+
+	dir := t.TempDir()
+	expansion := `
+formula = "fragment-expansion-conditional"
+type = "expansion"
+version = 2
+
+[[template]]
+id = "{target}.attempt"
+title = "Fast attempt"
+condition = "{{mode}} == fast"
+
+[[template]]
+id = "{target}.attempt"
+title = "Slow attempt"
+condition = "{{mode}} == slow"
+`
+	if err := os.WriteFile(filepath.Join(dir, "fragment-expansion-conditional.toml"), []byte(expansion), 0o644); err != nil {
+		t.Fatalf("write expansion: %v", err)
+	}
+
+	target := &Step{ID: "demo.target", Title: "Target"}
+	fragment, err := CompileExpansionFragment(context.Background(), "fragment-expansion-conditional", []string{dir}, target, map[string]string{"mode": "fast"})
+	if err != nil {
+		t.Fatalf("CompileExpansionFragment: %v", err)
+	}
+	if len(fragment.Steps) != 1 {
+		t.Fatalf("len(fragment.Steps) = %d, want 1", len(fragment.Steps))
+	}
+	if got := fragment.Steps[0].ID; got != "fragment-expansion-conditional.demo.target.attempt" {
+		t.Fatalf("fragment.Steps[0].ID = %q, want fragment-expansion-conditional.demo.target.attempt", got)
+	}
+}
+
 func TestExpandStepDoesNotMutateSharedTemplateState(t *testing.T) {
 	t.Parallel()
 
