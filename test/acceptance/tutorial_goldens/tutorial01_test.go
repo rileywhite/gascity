@@ -113,18 +113,6 @@ func TestTutorial01Cities(t *testing.T) {
 			if !strings.Contains(out, `provider = "claude"`) {
 				t.Fatalf("city.toml missing workspace provider:\n%s", out)
 			}
-			for _, want := range []string{
-				`[[agent]]`,
-				`name = "mayor"`,
-				`prompt_template = "agents/mayor/prompt.template.md"`,
-				`[[named_session]]`,
-				`template = "mayor"`,
-				`mode = "always"`,
-			} {
-				if !strings.Contains(out, want) {
-					t.Fatalf("city.toml missing %q:\n%s", want, out)
-				}
-			}
 		})
 
 		t.Run("cat pack.toml", func(t *testing.T) {
@@ -135,6 +123,12 @@ func TestTutorial01Cities(t *testing.T) {
 			for _, want := range []string{
 				`name = "my-city"`,
 				`schema = 2`,
+				`[[agent]]`,
+				`name = "mayor"`,
+				`prompt_template = "agents/mayor/prompt.template.md"`,
+				`[[named_session]]`,
+				`template = "mayor"`,
+				`mode = "always"`,
 			} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("pack.toml missing %q:\n%s", want, out)
