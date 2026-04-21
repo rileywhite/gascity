@@ -129,6 +129,9 @@ type CityRuntimeParams struct {
 }
 
 var cityRuntimeStartBeadsLifecycle = startBeadsLifecycle
+var cityRuntimeReloadLifecycleRetryDelay = time.Second
+
+const cityRuntimeReloadLifecycleRetryLimit = 2
 
 // newCityRuntime creates a CityRuntime, building internal components
 // (crash tracker, idle tracker, wisp GC, order dispatcher) from the
@@ -901,8 +904,22 @@ func (cr *CityRuntime) reloadConfigTraced(
 		appendWarning(fmt.Sprintf("config reload: %v", err))
 	}
 	resolveRigPaths(cityRoot, nextCfg.Rigs)
-	if err := cityRuntimeStartBeadsLifecycle(cityRoot, cr.cityName, nextCfg, cr.stderr); err != nil {
-		err := fmt.Errorf("config reload: %w", err)
+	var lifecycleErr error
+	for attempt := 1; attempt <= cityRuntimeReloadLifecycleRetryLimit; attempt++ {
+		lifecycleErr = cityRuntimeStartBeadsLifecycle(cityRoot, cr.cityName, nextCfg, cr.stderr)
+		if lifecycleErr == nil {
+			break
+		}
+		if attempt == cityRuntimeReloadLifecycleRetryLimit || !isRetryableManagedDoltLifecycleError(lifecycleErr) {
+			break
+		}
+		appendWarning(fmt.Sprintf("config reload: transient bead lifecycle failure: %v; retrying", lifecycleErr))
+		if cityRuntimeReloadLifecycleRetryDelay > 0 {
+			time.Sleep(cityRuntimeReloadLifecycleRetryDelay)
+		}
+	}
+	if lifecycleErr != nil {
+		err := fmt.Errorf("config reload: %w", lifecycleErr)
 		fmt.Fprintf(cr.stderr, "%s: %v (keeping old config)\n", cr.logPrefix, err) //nolint:errcheck // best-effort stderr
 		telemetry.RecordConfigReload(ctx, "", string(source), string(reloadOutcomeFailed), len(warnings), err)
 		if trace != nil {
