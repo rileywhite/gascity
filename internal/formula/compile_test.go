@@ -268,6 +268,257 @@ title = "Scan"
 	}
 }
 
+// TestCompileExtendsPhasePour regresses the merge bug where the 'extends'
+// resolver dropped Phase and Pour from the merged formula, silently coercing
+// vapor formulas to persistent and pour formulas back to root-only.
+func TestCompileExtendsPhasePour(t *testing.T) {
+	cases := []struct {
+		name         string
+		parent       string
+		child        string
+		wantPhase    string
+		wantPour     bool
+		wantRootOnly bool
+	}{
+		{
+			name: "parent_sets_phase_child_inherits",
+			parent: `
+formula = "base"
+version = 1
+phase = "vapor"
+
+[[steps]]
+id = "scan"
+title = "Scan"
+`,
+			child: `
+formula = "derived"
+version = 1
+extends = ["base"]
+`,
+			wantPhase:    "vapor",
+			wantPour:     false,
+			wantRootOnly: true,
+		},
+		{
+			name: "child_sets_phase_overrides_parent",
+			parent: `
+formula = "base"
+version = 1
+phase = "liquid"
+
+[[steps]]
+id = "scan"
+title = "Scan"
+`,
+			child: `
+formula = "derived"
+version = 1
+extends = ["base"]
+phase = "vapor"
+`,
+			wantPhase:    "vapor",
+			wantPour:     false,
+			wantRootOnly: true,
+		},
+		{
+			name: "parent_sets_pour_child_inherits",
+			parent: `
+formula = "base"
+version = 1
+pour = true
+
+[[steps]]
+id = "scan"
+title = "Scan"
+`,
+			child: `
+formula = "derived"
+version = 1
+extends = ["base"]
+`,
+			wantPhase:    "",
+			wantPour:     true,
+			wantRootOnly: false,
+		},
+		{
+			name: "parent_sets_both_child_inherits",
+			parent: `
+formula = "base"
+version = 1
+phase = "vapor"
+pour = true
+
+[[steps]]
+id = "scan"
+title = "Scan"
+`,
+			child: `
+formula = "derived"
+version = 1
+extends = ["base"]
+`,
+			wantPhase: "vapor",
+			wantPour:  true,
+			// RootOnly is gated on !Pour && Phase=="vapor"; Pour=true overrides.
+			wantRootOnly: false,
+		},
+		{
+			// Guards against a future refactor that stops seeding merged
+			// from the child: without seeding, a child-only Pour=true would
+			// be dropped because the parent loop only propagates true values.
+			name: "child_sets_pour_parent_unset",
+			parent: `
+formula = "base"
+version = 1
+
+[[steps]]
+id = "scan"
+title = "Scan"
+`,
+			child: `
+formula = "derived"
+version = 1
+extends = ["base"]
+pour = true
+`,
+			wantPhase:    "",
+			wantPour:     true,
+			wantRootOnly: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "base.toml"), []byte(tc.parent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "derived.toml"), []byte(tc.child), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			recipe, err := Compile(context.Background(), "derived", []string{dir}, nil)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+
+			if recipe.Phase != tc.wantPhase {
+				t.Errorf("Phase = %q, want %q", recipe.Phase, tc.wantPhase)
+			}
+			if recipe.Pour != tc.wantPour {
+				t.Errorf("Pour = %v, want %v", recipe.Pour, tc.wantPour)
+			}
+			if recipe.RootOnly != tc.wantRootOnly {
+				t.Errorf("RootOnly = %v, want %v", recipe.RootOnly, tc.wantRootOnly)
+			}
+		})
+	}
+}
+
+// TestCompileExtendsMultiParentPhaseFirstWins verifies that when multiple
+// parents declare Phase, the first non-empty parent wins — matching the
+// inheritance semantics already used for Vars and Contract.
+func TestCompileExtendsMultiParentPhaseFirstWins(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"parentA.toml": `
+formula = "parentA"
+version = 1
+phase = "vapor"
+
+[[steps]]
+id = "a"
+title = "A"
+`,
+		"parentB.toml": `
+formula = "parentB"
+version = 1
+phase = "liquid"
+
+[[steps]]
+id = "b"
+title = "B"
+`,
+		"child.toml": `
+formula = "child"
+version = 1
+extends = ["parentA", "parentB"]
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recipe, err := Compile(context.Background(), "child", []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	if recipe.Phase != "vapor" {
+		t.Errorf("Phase = %q, want %q (first non-empty parent wins)", recipe.Phase, "vapor")
+	}
+}
+
+// TestCompileExtendsMultiParentPourAnyParentWins verifies OR semantics for
+// Pour across multiple parents — unlike Phase (first-non-empty-wins), any
+// parent declaring pour=true promotes the merged formula regardless of
+// parent order. Pins the Phase-vs-Pour semantic asymmetry so future
+// refactors don't silently align them.
+func TestCompileExtendsMultiParentPourAnyParentWins(t *testing.T) {
+	cases := []struct {
+		name    string
+		extends string
+	}{
+		{name: "pour_first", extends: `["pourParent", "plainParent"]`},
+		{name: "pour_second", extends: `["plainParent", "pourParent"]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			files := map[string]string{
+				"pourParent.toml": `
+formula = "pourParent"
+version = 1
+pour = true
+
+[[steps]]
+id = "a"
+title = "A"
+`,
+				"plainParent.toml": `
+formula = "plainParent"
+version = 1
+
+[[steps]]
+id = "b"
+title = "B"
+`,
+				"child.toml": `
+formula = "child"
+version = 1
+extends = ` + tc.extends + `
+`,
+			}
+			for name, content := range files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			recipe, err := Compile(context.Background(), "child", []string{dir}, nil)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if !recipe.Pour {
+				t.Errorf("Pour = false, want true (any parent with pour=true promotes)")
+			}
+		})
+	}
+}
+
 func TestCompileCheckSyntaxWithoutGraphContractKeepsMoleculeRoot(t *testing.T) {
 	enableV2ForTest(t)
 
