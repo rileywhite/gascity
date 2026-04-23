@@ -119,7 +119,7 @@ func evaluateWakeReasons(
 		reasons = append(reasons, WakeKeepWarm)
 	}
 
-	if !waitHold && sp != nil && sp.IsAttached(name) {
+	if !waitHold && sessionAttachedForWakeReason(sp, name) {
 		reasons = append(reasons, WakeAttached)
 	}
 
